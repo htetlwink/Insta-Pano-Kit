@@ -198,6 +198,11 @@ class SlicingConfig:
     format: str = "JPEG"  # "JPEG" or "PNG"
     jpeg_quality: int = 95
     prefix: str = "panorama_slice"
+    tilt_angle: float = 0.0
+    smart_seams: bool = False
+    infinite_loop: bool = False
+    split_orientation: str = "horizontal"
+    before_after_mode: bool = False
 
     def __post_init__(self) -> None:
         """Validate and clamp configuration parameters."""
@@ -219,6 +224,11 @@ class SlicingConfig:
         self.pan_offset_y = max(-1.0, min(1.0, float(self.pan_offset_y)))
         self.jpeg_quality = max(1, min(100, int(self.jpeg_quality)))
         self.format = "PNG" if self.format.upper() == "PNG" else "JPEG"
+        self.tilt_angle = max(-10.0, min(10.0, float(self.tilt_angle)))
+        self.smart_seams = bool(self.smart_seams)
+        self.infinite_loop = bool(self.infinite_loop)
+        self.split_orientation = "vertical" if str(self.split_orientation).strip().lower() == "vertical" else "horizontal"
+        self.before_after_mode = bool(self.before_after_mode)
 
     def get_target_dimensions(self) -> Tuple[int, int]:
         """Resolve aspect ratio into (width, height) per slice."""
@@ -277,15 +287,83 @@ class ImageEngine:
     """Production-grade image processing engine for Instagram panoramas and grids."""
 
     @staticmethod
+    def _load_dng_or_raw(file_path: Union[str, Path]) -> Image.Image:
+        """Parse DNG/RAW image files, falling back to embedded full-resolution JPEG extraction."""
+        path_str = str(file_path)
+        with open(path_str, "rb") as f:
+            raw_bytes = f.read()
+
+        try:
+            candidate = Image.open(io.BytesIO(raw_bytes))
+            # Check TIFF tag 0x0201 (JPEGInterchangeFormat)
+            if hasattr(candidate, "tag_v2") and 0x0201 in candidate.tag_v2:
+                offset = candidate.tag_v2[0x0201]
+                length = candidate.tag_v2.get(0x0202, None)
+                jpeg_data = raw_bytes[offset : offset + length] if length else raw_bytes[offset:]
+                return Image.open(io.BytesIO(jpeg_data))
+            if candidate.mode in ("RGB", "RGBA", "L"):
+                candidate.load()
+                return candidate
+        except Exception:
+            pass
+
+        # Scan for embedded full-resolution JPEG stream (0xFFD8FF ... 0xFFD9)
+        idx = 0
+        best_img = None
+        best_pixels = 0
+        while True:
+            idx = raw_bytes.find(b"\xff\xd8\xff", idx)
+            if idx == -1:
+                break
+            end_idx = raw_bytes.find(b"\xff\xd9", idx + 2)
+            if end_idx != -1:
+                chunk = raw_bytes[idx : end_idx + 2]
+                try:
+                    cand = Image.open(io.BytesIO(chunk))
+                    cand.load()
+                    pixels = cand.width * cand.height
+                    if pixels > best_pixels:
+                        best_pixels = pixels
+                        best_img = cand
+                except Exception:
+                    pass
+                idx = end_idx + 2
+            else:
+                idx += 3
+
+        if best_img is not None:
+            return best_img
+
+        return Image.open(path_str)
+
+    @staticmethod
     def load_image(source: Union[str, Path, Image.Image]) -> Image.Image:
         """
         Load an image from file path or PIL Image object.
+        Supports HEIC/HEIF (via pillow_heif) and DNG/RAW files with embedded JPEG fallback.
         Applies pre-decompression dimension checks and EXIF orientation normalization.
         """
         Image.MAX_IMAGE_PIXELS = None
 
+        # Register HEIC/HEIF opener if pillow_heif is available
+        try:
+            import pillow_heif
+            pillow_heif.register_heif_opener()
+        except Exception:
+            pass
+
         if isinstance(source, (str, Path)):
-            img = Image.open(str(source))
+            src_str = str(source).lower()
+            if src_str.endswith((".dng", ".raw", ".cr2", ".nef", ".arw")):
+                img = ImageEngine._load_dng_or_raw(source)
+            else:
+                try:
+                    img = Image.open(str(source))
+                except Exception:
+                    try:
+                        img = ImageEngine._load_dng_or_raw(source)
+                    except Exception:
+                        raise
         elif isinstance(source, Image.Image):
             img = source
         else:
@@ -638,6 +716,189 @@ class ImageEngine:
         return card
 
     # -----------------------------------------------------------------------
+    # Advanced Geometry & Smart Seam Tools
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def detect_horizon_tilt(image: Image.Image) -> float:
+        """
+        Calculate horizon tilt angle in [-10.0, 10.0] degrees using horizontal gradient / projection profile analysis.
+        """
+        import numpy as np
+        orig_w, orig_h = image.size
+        proxy_w = 600
+        if orig_w > proxy_w:
+            proxy_h = max(10, int(round(orig_h * (proxy_w / orig_w))))
+            proxy_img = image.resize((proxy_w, proxy_h), Image.Resampling.BILINEAR)
+        else:
+            proxy_img = image
+
+        gray = proxy_img.convert("L")
+        arr = np.array(gray, dtype=float)
+        h, w = arr.shape
+        if h < 20 or w < 20:
+            return 0.0
+
+        gy = np.abs(arr[2:, 1:-1] - arr[:-2, 1:-1])
+        if float(np.max(gy)) < 1.0 or float(np.sum(gy)) < 10.0:
+            return 0.0
+
+        coarse_angles = np.linspace(-10.0, 10.0, 41)
+        best_coarse = 0.0
+        max_var = -1.0
+        zero_var = 0.0
+
+        edge_img = Image.fromarray(gy)
+        ch, cw = gy.shape
+
+        for a in coarse_angles:
+            rot = edge_img.rotate(a, resample=Image.Resampling.BILINEAR)
+            rot_arr = np.array(rot)
+            crop = rot_arr[int(ch * 0.15) : int(ch * 0.85), int(cw * 0.15) : int(cw * 0.85)]
+            row_sums = np.sum(crop, axis=1)
+            v = float(np.var(row_sums))
+            if abs(a) < 1e-4:
+                zero_var = v
+            if v > max_var:
+                max_var = v
+                best_coarse = a
+
+        if max_var < 1.0:
+            return 0.0
+
+        fine_angles = np.linspace(best_coarse - 0.6, best_coarse + 0.6, 25)
+        best_fine = best_coarse
+        for a in fine_angles:
+            if a < -10.0 or a > 10.0:
+                continue
+            rot = edge_img.rotate(a, resample=Image.Resampling.BILINEAR)
+            rot_arr = np.array(rot)
+            crop = rot_arr[int(ch * 0.15) : int(ch * 0.85), int(cw * 0.15) : int(cw * 0.85)]
+            v = float(np.var(np.sum(crop, axis=1)))
+            if v > max_var:
+                max_var = v
+                best_fine = a
+
+        if zero_var > 0 and (max_var / zero_var) < 1.03:
+            return 0.0
+
+        return round(float(np.clip(best_fine, -10.0, 10.0)), 2)
+
+    @staticmethod
+    def rotate_and_crop(image: Image.Image, angle: float) -> Image.Image:
+        """
+        Rotate image by `angle` degrees and crop to the maximum inscribed rectangle
+        so no black corners or borders appear.
+        """
+        if abs(angle) < 1e-4:
+            return image.copy()
+
+        w0, h0 = image.size
+        rad = math.radians(abs(angle))
+        sin_a = math.sin(rad)
+        cos_a = math.cos(rad)
+
+        w_rot = w0 * cos_a + h0 * sin_a
+        h_rot = w0 * sin_a + h0 * cos_a
+
+        s = min(w0 / w_rot, h0 / h_rot)
+        crop_w = max(1, int(math.floor(w0 * s)))
+        crop_h = max(1, int(math.floor(h0 * s)))
+
+        rotated = image.rotate(angle, resample=Image.Resampling.BICUBIC, expand=True)
+        rot_w, rot_h = rotated.size
+
+        left = max(0, int((rot_w - crop_w) / 2))
+        top = max(0, int((rot_h - crop_h) / 2))
+        right = min(rot_w, left + crop_w)
+        bottom = min(rot_h, top + crop_h)
+
+        return rotated.crop((left, top, right, bottom))
+
+    @staticmethod
+    def compute_smart_seams(
+        image: Image.Image,
+        num_slices: int,
+        search_margin_ratio: float = 0.08,
+    ) -> List[int]:
+        """
+        Compute vertical gradient energy around default equidistant seams to find minimum valley seams,
+        avoiding cutting through high-energy subjects like faces or buildings.
+        Returns:
+            List of (num_slices - 1) seam X coordinates.
+        """
+        import numpy as np
+        if num_slices <= 1:
+            return []
+
+        w, h = image.size
+        proxy_h = 300
+        scale = proxy_h / max(1, h)
+        proxy_w = max(num_slices, int(round(w * scale)))
+
+        gray = image.convert("L").resize((proxy_w, proxy_h), Image.Resampling.BILINEAR)
+        arr = np.array(gray, dtype=float)
+
+        gx = np.zeros_like(arr)
+        gy = np.zeros_like(arr)
+        gx[:, 1:-1] = (arr[:, 2:] - arr[:, :-2]) / 2.0
+        gy[1:-1, :] = (arr[2:, :] - arr[:-2, :]) / 2.0
+        energy = np.sqrt(gx**2 + gy**2)
+
+        col_energy = np.sum(energy, axis=0)
+        margin = max(1, int(round(proxy_w * search_margin_ratio)))
+        seams = []
+
+        for i in range(1, num_slices):
+            default_x = int(round(i * proxy_w / num_slices))
+            x_start = max(0, default_x - margin)
+            x_end = min(proxy_w - 1, default_x + margin)
+
+            if seams:
+                x_start = max(x_start, seams[-1] + 1)
+            if x_start >= x_end:
+                seams.append(default_x)
+                continue
+
+            window = col_energy[x_start : x_end + 1]
+            best_local_x = int(np.argmin(window))
+            seams.append(int(x_start + best_local_x))
+
+        orig_seams = [int(round(s / scale)) for s in seams]
+        clamped_seams = []
+        prev = 0
+        for s in orig_seams:
+            s_clamped = max(prev + 1, min(w - 1, s))
+            clamped_seams.append(s_clamped)
+            prev = s_clamped
+
+        return clamped_seams
+
+    @staticmethod
+    def _apply_infinite_loop_wrap(img: Image.Image, pan_offset_x: float = 0.0) -> Image.Image:
+        """Seamlessly blend left and right boundaries for 360-degree panoramas, with cyclic shift."""
+        import numpy as np
+        arr = np.array(img).astype(np.float32)
+        h, w = arr.shape[:2]
+        if w < 20:
+            return img
+
+        if abs(pan_offset_x) > 1e-4:
+            shift_x = int(round(w * (pan_offset_x / 2.0)))
+            arr = np.roll(arr, shift_x, axis=1)
+
+        blend_width = max(10, min(int(round(w * 0.04)), w // 4))
+        for k in range(blend_width):
+            alpha = k / float(blend_width)
+            left_col = arr[:, k]
+            right_col = arr[:, w - blend_width + k]
+            blended = (1.0 - alpha) * right_col + alpha * left_col
+            arr[:, k] = blended
+            arr[:, w - blend_width + k] = blended
+
+        return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
+
+    # -----------------------------------------------------------------------
     # Panorama Carousel Slicing
     # -----------------------------------------------------------------------
 
@@ -655,12 +916,82 @@ class ImageEngine:
             config = SlicingConfig(**kwargs)
 
         img = cls.load_image(image)
+
+        # 1. Apply horizon tilt angle correction if specified
+        if abs(config.tilt_angle) > 1e-4:
+            img = cls.rotate_and_crop(img, config.tilt_angle)
+
+        # 2. Apply infinite loop wrap if 360 panorama
+        if config.infinite_loop and config.split_orientation != "vertical":
+            img = cls._apply_infinite_loop_wrap(img, config.pan_offset_x)
+
         orig_w, orig_h = img.size
 
         target_w, target_h = config.get_target_dimensions()
         n_slices = config.num_slices
-        total_target_w = target_w * n_slices
         fit_mode = config.fit_mode.strip()
+
+        # Handle Vertical Split Orientation (top to bottom stacked slides)
+        if config.split_orientation == "vertical":
+            total_target_w = target_w
+            total_target_h = target_h * n_slices
+
+            if "proportional" in fit_mode.lower():
+                scale = target_w / orig_w
+                new_w = target_w
+                new_h = max(n_slices, int(round(orig_h * scale)))
+                carousel_canvas = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                slice_boundaries_y = [
+                    (
+                        int(round(i * new_h / n_slices)),
+                        int(round((i + 1) * new_h / n_slices)),
+                    )
+                    for i in range(n_slices)
+                ]
+            elif "blurred" in fit_mode.lower():
+                carousel_canvas = cls._build_blurred_fill_canvas(
+                    img, total_target_w, total_target_h, config.pan_offset_x, config.pan_offset_y
+                )
+                slice_boundaries_y = [(i * target_h, (i + 1) * target_h) for i in range(n_slices)]
+            elif "gallery" in fit_mode.lower() or "solid" in fit_mode.lower() or "border" in fit_mode.lower():
+                carousel_canvas = cls._build_gallery_border_canvas(
+                    img,
+                    total_target_w,
+                    total_target_h,
+                    config.border_color,
+                    config.border_padding,
+                    config.pan_offset_x,
+                    config.pan_offset_y,
+                )
+                slice_boundaries_y = [(i * target_h, (i + 1) * target_h) for i in range(n_slices)]
+            else:
+                carousel_canvas = cls._build_standard_fit_canvas(
+                    img, total_target_w, total_target_h, config.pan_offset_x, config.pan_offset_y
+                )
+                slice_boundaries_y = [(i * target_h, (i + 1) * target_h) for i in range(n_slices)]
+
+            if config.color_filter and config.color_filter.strip().lower() != "none":
+                carousel_canvas = cls.apply_color_filter(carousel_canvas, config.color_filter)
+
+            total_display_slices = n_slices + 1 if config.include_camera_card else n_slices
+
+            slices = []
+            for i, (y0, y1) in enumerate(slice_boundaries_y):
+                slice_img = carousel_canvas.crop((0, y0, target_w, y1))
+                if slice_img.size != (target_w, target_h) and "proportional" not in fit_mode.lower():
+                    slice_img = slice_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+                slice_img = cls._apply_slide_overlays(slice_img, i, total_display_slices, config)
+                slices.append(slice_img)
+
+            if config.include_camera_card:
+                exif_data = cls.extract_exif_metadata(image)
+                card_img = cls.generate_camera_card(exif_data, width=target_w, height=target_h)
+                slices.append(card_img)
+
+            return slices
+
+        # Horizontal Carousel Canvas Construction
+        total_target_w = target_w * n_slices
 
         # Build carousel canvas according to the requested fit mode
         if "proportional" in fit_mode.lower():
@@ -675,7 +1006,15 @@ class ImageEngine:
             if config.color_filter and config.color_filter.strip().lower() != "none":
                 carousel_canvas = cls.apply_color_filter(carousel_canvas, config.color_filter)
 
-            if config.slice_weights:
+            if config.smart_seams and not config.slice_weights:
+                seams = cls.compute_smart_seams(carousel_canvas, n_slices)
+                slice_boundaries = []
+                prev_x = 0
+                for s in seams:
+                    slice_boundaries.append((prev_x, s))
+                    prev_x = s
+                slice_boundaries.append((prev_x, new_w))
+            elif config.slice_weights:
                 W = sum(config.slice_weights)
                 widths = [int(round(new_w * (w / W))) for w in config.slice_weights]
                 widths[-1] = new_w - sum(widths[:-1])
@@ -752,8 +1091,16 @@ class ImageEngine:
         if config.color_filter and config.color_filter.strip().lower() != "none":
             carousel_canvas = cls.apply_color_filter(carousel_canvas, config.color_filter)
 
-        # Determine slice boundaries (uniform or custom weights)
-        if config.slice_weights:
+        # Determine slice boundaries (uniform, custom weights, or smart seams)
+        if config.smart_seams and not config.slice_weights:
+            seams = cls.compute_smart_seams(carousel_canvas, n_slices)
+            slice_boundaries = []
+            prev_x = 0
+            for s in seams:
+                slice_boundaries.append((prev_x, s))
+                prev_x = s
+            slice_boundaries.append((prev_x, total_target_w))
+        elif config.slice_weights:
             W = sum(config.slice_weights)
             widths = [int(round(total_target_w * (w / W))) for w in config.slice_weights]
             widths[-1] = total_target_w - sum(widths[:-1])
@@ -787,6 +1134,8 @@ class ImageEngine:
         slices = []
         for i, (x0, x1) in enumerate(slice_boundaries):
             slice_img = carousel_canvas.crop((x0, 0, x1, target_h))
+            if slice_img.size != (target_w, target_h) and not config.slice_weights and "proportional" not in fit_mode.lower():
+                slice_img = slice_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
             slice_img = cls._apply_slide_overlays(slice_img, i, total_display_slices, config)
             slices.append(slice_img)
 
@@ -1055,6 +1404,13 @@ class ImageEngine:
             cls._draw_story_progress_bars(draw, sw, sh, slide_index, total_slices)
             cls._draw_story_tap_cue(draw, sw, sh, slide_index, total_slices)
 
+        # 6. Before / After Mode Badges
+        if config.before_after_mode:
+            if slide_index == 0:
+                cls._draw_before_badge(draw, sw, sh)
+            elif slide_index == 1:
+                cls._draw_after_badge(draw, sw, sh)
+
         # Ensure clean white background if slide has alpha/transparency
         if slide_img.mode in ("RGBA", "LA") or (slide_img.mode == "P" and "transparency" in slide_img.info):
             base_bg = Image.new("RGBA", (sw, sh), (255, 255, 255, 255))
@@ -1113,6 +1469,82 @@ class ImageEngine:
         )
 
         # Text inside badge
+        draw.text(
+            (bx0 + pad_x, by0 + pad_y - 2),
+            text,
+            fill=(255, 255, 255, 245),
+            font=font,
+        )
+
+    @staticmethod
+    def _draw_before_badge(draw: ImageDraw.ImageDraw, sw: int, sh: int) -> None:
+        """Render a modern 'BEFORE ➔' badge on Slide 1."""
+        font = get_pil_font(size=26, bold=True)
+        text = "BEFORE ➔"
+
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+
+        pad_x = 24
+        pad_y = 14
+        badge_w = text_w + pad_x * 2
+        badge_h = text_h + pad_y * 2
+
+        margin_right = 45
+        margin_bottom = 60
+
+        bx0 = sw - margin_right - badge_w
+        by0 = sh - margin_bottom - badge_h
+        bx1 = bx0 + badge_w
+        by1 = by0 + badge_h
+
+        draw.rounded_rectangle(
+            [(bx0, by0), (bx1, by1)],
+            radius=badge_h // 2,
+            fill=(15, 15, 20, 195),
+            outline=(255, 255, 255, 160),
+            width=2,
+        )
+
+        draw.text(
+            (bx0 + pad_x, by0 + pad_y - 2),
+            text,
+            fill=(255, 255, 255, 245),
+            font=font,
+        )
+
+    @staticmethod
+    def _draw_after_badge(draw: ImageDraw.ImageDraw, sw: int, sh: int) -> None:
+        """Render a modern '✨ AFTER' badge on Slide 2."""
+        font = get_pil_font(size=26, bold=True)
+        text = "✨ AFTER"
+
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+
+        pad_x = 24
+        pad_y = 14
+        badge_w = text_w + pad_x * 2
+        badge_h = text_h + pad_y * 2
+
+        margin_left = 45
+        margin_bottom = 60
+
+        bx0 = margin_left
+        by0 = sh - margin_bottom - badge_h
+        bx1 = bx0 + badge_w
+        by1 = by0 + badge_h
+
+        draw.rounded_rectangle(
+            [(bx0, by0), (bx1, by1)],
+            radius=badge_h // 2,
+            fill=(15, 15, 20, 195),
+            outline=(255, 215, 0, 200),
+            width=2,
+        )
+
         draw.text(
             (bx0 + pad_x, by0 + pad_y - 2),
             text,
@@ -1808,3 +2240,25 @@ def generate_camera_card(
 ) -> Image.Image:
     """Convenience functional wrapper for ImageEngine.generate_camera_card."""
     return ImageEngine.generate_camera_card(exif_data, width=width, height=height)
+
+
+def detect_horizon_tilt(image: Image.Image) -> float:
+    """Convenience functional wrapper for ImageEngine.detect_horizon_tilt."""
+    return ImageEngine.detect_horizon_tilt(image)
+
+
+def rotate_and_crop(image: Image.Image, angle: float) -> Image.Image:
+    """Convenience functional wrapper for ImageEngine.rotate_and_crop."""
+    return ImageEngine.rotate_and_crop(image, angle)
+
+
+def compute_smart_seams(
+    image: Image.Image,
+    num_slices: int,
+    search_margin_ratio: float = 0.08,
+) -> List[int]:
+    """Convenience functional wrapper for ImageEngine.compute_smart_seams."""
+    return ImageEngine.compute_smart_seams(
+        image=image, num_slices=num_slices, search_margin_ratio=search_margin_ratio
+    )
+

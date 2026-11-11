@@ -10,7 +10,9 @@ import subprocess
 from PIL import Image
 
 from core.video_engine import (
+    VideoConfig,
     VideoPanConfig,
+    generate_ambient_audio,
     generate_panning_video,
     is_ffmpeg_available,
     get_target_resolution,
@@ -180,6 +182,69 @@ class TestVideoEngine(unittest.TestCase):
         config = VideoPanConfig(output_path=os.path.join(self.temp_dir, "dummy.mp4"))
         with self.assertRaises(FileNotFoundError):
             generate_panning_video("/path/to/nonexistent/image.jpg", config=config)
+
+    def test_generate_ambient_audio(self) -> None:
+        """Verify generating royalty-free ambient audio bed."""
+        import wave
+        out_wav = os.path.join(self.temp_dir, "ambient_drone.wav")
+        res_path = generate_ambient_audio(duration=2.0, output_path=out_wav)
+        self.assertEqual(res_path, out_wav)
+        self.assertTrue(os.path.exists(out_wav))
+        self.assertGreater(os.path.getsize(out_wav), 10000)
+
+        with wave.open(out_wav, "rb") as wf:
+            self.assertEqual(wf.getnchannels(), 2)
+            self.assertEqual(wf.getsampwidth(), 2)
+            self.assertEqual(wf.getframerate(), 44100)
+
+    def test_video_with_audio_mixing(self) -> None:
+        """Verify video generation mixes audio and creates AAC stream."""
+        out_mp4 = os.path.join(self.temp_dir, "video_with_audio.mp4")
+        cfg = VideoConfig(
+            target_ratio="Square (1:1)",
+            duration_seconds=1.5,
+            fps=30,
+            direction="Left to Right",
+            speed_ramping="Slow-mo Climax",
+            audio_path="ambient",
+            output_path=out_mp4,
+        )
+
+        res = generate_panning_video(self.pano_path, config=cfg)
+        self.assertEqual(res, out_mp4)
+        self.assertTrue(os.path.exists(out_mp4))
+
+        # Check audio stream with ffprobe
+        cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "stream=codec_type,codec_name",
+            "-of", "csv=p=0",
+            out_mp4,
+        ]
+        probe = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(probe.returncode, 0)
+        self.assertIn("video", probe.stdout)
+        self.assertIn("h264", probe.stdout)
+        self.assertIn("audio", probe.stdout)
+        self.assertIn("aac", probe.stdout)
+
+    def test_video_speed_ramping_modes(self) -> None:
+        """Verify Linear, Ease In & Out, and Slow-mo Climax speed ramping."""
+        for mode in ["Linear", "Ease In & Out", "Slow-mo Climax"]:
+            out_mp4 = os.path.join(self.temp_dir, f"video_ramp_{mode.replace(' ', '_')}.mp4")
+            cfg = VideoConfig(
+                target_ratio="Feed (4:5)",
+                duration_seconds=1.0,
+                fps=24,
+                direction="Right to Left",
+                speed_ramping=mode,
+                output_path=out_mp4,
+            )
+            res = generate_panning_video(self.pano_path, config=cfg)
+            self.assertTrue(os.path.exists(res))
+            self.assertGreater(os.path.getsize(res), 500)
+
 
 
 if __name__ == "__main__":

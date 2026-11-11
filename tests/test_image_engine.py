@@ -25,10 +25,13 @@ from core.image_engine import (
     ImageEngine,
     SlicingConfig,
     apply_color_filter,
+    compute_smart_seams,
+    detect_horizon_tilt,
     extract_exif_metadata,
     generate_camera_card,
     generate_upload_guide,
     parse_color,
+    rotate_and_crop,
     save_slices,
     slice_grid,
     slice_panorama,
@@ -640,6 +643,135 @@ class TestImageEngine(unittest.TestCase):
         self.assertGreater(slices_prop[1].size[0], slices_prop[0].size[0])
         self.assertEqual(slices_prop[0].size[1], 1350)
         self.assertEqual(slices_prop[1].size[1], 1350)
+
+    def test_detect_horizon_tilt(self) -> None:
+        """Verify horizon tilt detection on level, blank, and tilted images."""
+        import numpy as np
+
+        # 1. Level line should yield 0.0
+        level_img = Image.new("RGB", (600, 300), (220, 220, 220))
+        d = ImageDraw.Draw(level_img)
+        d.line([(0, 150), (600, 150)], fill=(20, 20, 20), width=6)
+        self.assertEqual(detect_horizon_tilt(level_img), 0.0)
+
+        # 2. Blank uniform image should yield 0.0
+        blank_img = Image.new("RGB", (600, 300), (128, 128, 128))
+        self.assertEqual(detect_horizon_tilt(blank_img), 0.0)
+
+        # 3. Tilted line at 4.0 degrees
+        tilted_img = Image.new("RGB", (600, 300), (220, 220, 220))
+        d_tilt = ImageDraw.Draw(tilted_img)
+        rad = np.radians(4.0)
+        d_tilt.line([(0, 150 - 300 * np.tan(rad)), (600, 150 + 300 * np.tan(rad))], fill=(20, 20, 20), width=6)
+        detected = detect_horizon_tilt(tilted_img)
+        self.assertAlmostEqual(abs(detected), 4.0, delta=0.5)
+
+    def test_rotate_and_crop(self) -> None:
+        """Verify rotate_and_crop removes black rotation borders."""
+        # Solid red test image
+        img = Image.new("RGB", (1000, 400), (255, 0, 0))
+        rotated = rotate_and_crop(img, 5.0)
+
+        self.assertLess(rotated.width, img.width)
+        self.assertLess(rotated.height, img.height)
+        # Check there are no black corners (R min should be 255)
+        extrema = rotated.getextrema()
+        self.assertEqual(extrema[0], (255, 255), "Red channel should remain 255 with no black borders")
+        self.assertEqual(extrema[1], (0, 0))
+        self.assertEqual(extrema[2], (0, 0))
+
+        # Test zero rotation
+        zero_rot = rotate_and_crop(img, 0.0)
+        self.assertEqual(zero_rot.size, img.size)
+
+    def test_compute_smart_seams(self) -> None:
+        """Verify compute_smart_seams avoids high energy vertical columns."""
+        import numpy as np
+        # Create image with high-gradient bar at x=300 (which is default seam for 900px, 3 slices)
+        img_arr = np.full((300, 900, 3), 240, dtype=np.uint8)
+        img_arr[:, 295:305] = 10  # Dark bar at x=300
+        test_img = Image.fromarray(img_arr)
+
+        seams = compute_smart_seams(test_img, num_slices=3)
+        self.assertEqual(len(seams), 2)
+        self.assertTrue(1 < seams[0] < seams[1] < 899)
+        # Smart seam should steer away from default x=300
+        self.assertNotEqual(seams[0], 300)
+
+    def test_slicing_with_tilt_angle(self) -> None:
+        """Verify slicing panorama with tilt angle applied."""
+        cfg = SlicingConfig(
+            num_slices=3,
+            aspect_ratio="Portrait (4:5)",
+            tilt_angle=3.5,
+        )
+        slices = slice_panorama(self.wide_img, cfg)
+        self.assertEqual(len(slices), 3)
+        for s in slices:
+            self.assertEqual(s.size, (1080, 1350))
+
+    def test_vertical_split_orientation(self) -> None:
+        """Verify vertical split slices top-to-bottom into stacked slides."""
+        cfg = SlicingConfig(
+            num_slices=3,
+            aspect_ratio="Portrait (4:5)",
+            split_orientation="vertical",
+        )
+        slices = slice_panorama(self.tall_img, cfg)
+        self.assertEqual(len(slices), 3)
+        for s in slices:
+            self.assertEqual(s.size, (1080, 1350))
+
+    def test_infinite_loop_panorama(self) -> None:
+        """Verify infinite loop 360-degree panorama slicing."""
+        cfg = SlicingConfig(
+            num_slices=3,
+            aspect_ratio="Portrait (4:5)",
+            infinite_loop=True,
+            pan_offset_x=0.2,
+        )
+        slices = slice_panorama(self.wide_img, cfg)
+        self.assertEqual(len(slices), 3)
+        for s in slices:
+            self.assertEqual(s.size, (1080, 1350))
+
+    def test_before_after_mode(self) -> None:
+        """Verify before_after_mode renders BEFORE on slide 1 and AFTER on slide 2."""
+        cfg_ba = SlicingConfig(
+            num_slices=2,
+            aspect_ratio="Portrait (4:5)",
+            before_after_mode=True,
+        )
+        slices_ba = slice_panorama(self.wide_img, cfg_ba)
+        self.assertEqual(len(slices_ba), 2)
+
+        cfg_plain = SlicingConfig(
+            num_slices=2,
+            aspect_ratio="Portrait (4:5)",
+            before_after_mode=False,
+        )
+        slices_plain = slice_panorama(self.wide_img, cfg_plain)
+
+        # Both slide 1 and slide 2 should have visual badges differing from plain
+        self.assertNotEqual(slices_ba[0].tobytes(), slices_plain[0].tobytes())
+        self.assertNotEqual(slices_ba[1].tobytes(), slices_plain[1].tobytes())
+
+    def test_raw_and_dng_embedded_jpeg_fallback(self) -> None:
+        """Verify DNG/RAW image loader extracts embedded full-resolution JPEG."""
+        import io
+        jpeg_img = Image.new("RGB", (400, 200), (40, 160, 220))
+        buf = io.BytesIO()
+        jpeg_img.save(buf, format="JPEG")
+        jpeg_bytes = buf.getvalue()
+
+        # Build simulated RAW file with embedded JPEG stream
+        raw_mock = os.path.join(self.temp_dir, "sample_camera.dng")
+        with open(raw_mock, "wb") as f:
+            f.write(b"RAW_HEADER_MOCK_DATA" * 15 + jpeg_bytes + b"RAW_FOOTER_METADATA")
+
+        loaded = ImageEngine.load_image(raw_mock)
+        self.assertEqual(loaded.size, (400, 200))
+
 
 
 if __name__ == "__main__":

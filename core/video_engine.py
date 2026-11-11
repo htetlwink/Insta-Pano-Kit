@@ -24,6 +24,113 @@ class VideoPanConfig:
     easing: bool = True
     crf: int = 18
     preset: str = "medium"
+    audio_path: Optional[str] = None
+    speed_ramping: str = "Linear"  # "Linear", "Ease In & Out", "Slow-mo Climax"
+
+
+# Engine alias for unified configuration naming
+VideoConfig = VideoPanConfig
+
+
+def generate_ambient_audio(duration: float, output_path: str) -> str:
+    """
+    Generate a soothing, royalty-free ambient audio bed using clean synthesized
+    sine/triangle harmonic drone chords so that video export can always include rich audio.
+
+    Args:
+        duration: Duration in seconds.
+        output_path: Target path for the audio file (.wav, .aac, .m4a, or .mp3).
+
+    Returns:
+        Absolute path to the generated audio file.
+    """
+    import numpy as np
+    import wave
+
+    sample_rate = 44100
+    n_samples = max(sample_rate, int(round(duration * sample_rate)))
+    t = np.linspace(0, duration, n_samples, endpoint=False)
+
+    # Harmonic drone chord frequencies (C Major 9: C2, C3, G3, D4, E4)
+    freqs = [65.41, 130.81, 196.00, 293.66, 329.63]
+    left = np.zeros(n_samples, dtype=float)
+    right = np.zeros(n_samples, dtype=float)
+
+    for i, f in enumerate(freqs):
+        amp = 0.18 / (1.0 + i * 0.25)
+        # Gentle breathing LFO modulation
+        lfo_l = 0.85 + 0.15 * np.sin(2 * np.pi * 0.18 * t + i)
+        lfo_r = 0.85 + 0.15 * np.sin(2 * np.pi * 0.23 * t + i * 1.5)
+
+        # Left channel with slight negative detune (-0.25 Hz)
+        sig_l = amp * np.sin(2 * np.pi * (f - 0.25) * t) * lfo_l
+        sig_l += (amp * 0.25) * np.sin(2 * np.pi * (f * 3) * t) * lfo_l
+
+        # Right channel with slight positive detune (+0.25 Hz)
+        sig_r = amp * np.sin(2 * np.pi * (f + 0.25) * t) * lfo_r
+        sig_r += (amp * 0.25) * np.sin(2 * np.pi * (f * 3) * t) * lfo_r
+
+        left += sig_l
+        right += sig_r
+
+    # Fade-in and fade-out envelope
+    fade_len = min(int(sample_rate * 1.2), n_samples // 4)
+    if fade_len > 0:
+        fade_in = 0.5 - 0.5 * np.cos(np.pi * np.arange(fade_len) / fade_len)
+        fade_out = 0.5 + 0.5 * np.cos(np.pi * np.arange(fade_len) / fade_len)
+        left[:fade_len] *= fade_in
+        right[:fade_len] *= fade_in
+        left[-fade_len:] *= fade_out
+        right[-fade_len:] *= fade_out
+
+    # Normalize amplitude to -1.5 dB (peak 0.84)
+    max_val = max(float(np.max(np.abs(left))), float(np.max(np.abs(right))), 1e-6)
+    left = (left / max_val) * 0.84
+    right = (right / max_val) * 0.84
+
+    left_i16 = (left * 32767).astype(np.int16)
+    right_i16 = (right * 32767).astype(np.int16)
+    stereo = np.empty((n_samples * 2,), dtype=np.int16)
+    stereo[0::2] = left_i16
+    stereo[1::2] = right_i16
+
+    out_abs = os.path.abspath(output_path)
+    os.makedirs(os.path.dirname(out_abs), exist_ok=True)
+
+    if not out_abs.lower().endswith(".wav"):
+        tmp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        wav_path = tmp_wav.name
+        tmp_wav.close()
+        try:
+            with wave.open(wav_path, "wb") as wf:
+                wf.setnchannels(2)
+                wf.setsampwidth(2)
+                wf.setframerate(sample_rate)
+                wf.writeframes(stereo.tobytes())
+
+            ffmpeg_bin = get_ffmpeg_path()
+            if ffmpeg_bin:
+                subprocess.run(
+                    [ffmpeg_bin, "-y", "-i", wav_path, "-c:a", "aac", "-b:a", "192k", out_abs],
+                    check=True,
+                    capture_output=True,
+                )
+            else:
+                shutil.copyfile(wav_path, out_abs)
+        finally:
+            if os.path.exists(wav_path):
+                try:
+                    os.unlink(wav_path)
+                except Exception:
+                    pass
+    else:
+        with wave.open(out_abs, "wb") as wf:
+            wf.setnchannels(2)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(stereo.tobytes())
+
+    return out_abs
 
 
 def get_ffmpeg_path() -> Optional[str]:
@@ -106,6 +213,7 @@ def generate_panning_video(
         config = VideoPanConfig()
 
     temp_image_path: Optional[str] = None
+    temp_audio_path: Optional[str] = None
     input_file_for_ffmpeg: str = ""
 
     try:
@@ -158,6 +266,26 @@ def generate_panning_video(
         duration = max(0.5, float(config.duration_seconds))
         fps = max(1, int(config.fps))
         total_frames = max(1, int(round(fps * duration)))
+
+        # Audio handling & generation
+        audio_input_for_ffmpeg: Optional[str] = None
+
+        if config.audio_path:
+            audio_str = str(config.audio_path).strip()
+            if audio_str.lower() in ("generate", "ambient", "auto", "default", "true"):
+                tmp_aud = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+                temp_audio_path = tmp_aud.name
+                tmp_aud.close()
+                generate_ambient_audio(duration, temp_audio_path)
+                audio_input_for_ffmpeg = temp_audio_path
+            elif os.path.isfile(audio_str):
+                audio_input_for_ffmpeg = os.path.abspath(audio_str)
+            else:
+                tmp_aud = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+                temp_audio_path = tmp_aud.name
+                tmp_aud.close()
+                generate_ambient_audio(duration, temp_audio_path)
+                audio_input_for_ffmpeg = temp_audio_path
 
         dir_lower = config.direction.lower().strip()
         is_zoom_reveal = "zoom" in dir_lower
@@ -234,16 +362,24 @@ def generate_panning_video(
                 ffmpeg_bin,
                 "-y",
                 "-i", input_file_for_ffmpeg,
+            ]
+            if audio_input_for_ffmpeg:
+                cmd.extend(["-i", audio_input_for_ffmpeg])
+            cmd.extend([
                 "-vf", vf_str,
                 "-c:v", "libx264",
                 "-preset", config.preset or "medium",
                 "-crf", str(config.crf or 18),
                 "-pix_fmt", "yuv420p",
+            ])
+            if audio_input_for_ffmpeg:
+                cmd.extend(["-c:a", "aac", "-b:a", "192k", "-shortest"])
+            cmd.extend([
                 "-movflags", "+faststart",
                 "-t", f"{duration:.3f}",
                 "-progress", "pipe:1",
                 out_path,
-            ]
+            ])
         else:
             # Scale image so target height and width are both fully covered
             scale_factor = max(tw / orig_w, th / orig_h)
@@ -264,17 +400,23 @@ def generate_panning_video(
             if max_delta_x == 0:
                 x_expr = "0"
             else:
+                ramping = str(config.speed_ramping).strip().lower()
                 if "ping-pong" in dir_lower or "boomerang" in dir_lower:
-                    # Boomerang / Ping-Pong: 0 -> 1 -> 0 using smooth cosine
                     x_expr = f"(in_w-{tw})*(0.5-0.5*cos(2*PI*t/{duration:.4f}))"
                 elif "right to left" in dir_lower or "rtl" in dir_lower:
-                    if config.easing:
+                    if "slow-mo" in ramping or "climax" in ramping:
+                        tau = f"((t/{duration:.4f})-(0.75/(2*PI))*sin(2*PI*t/{duration:.4f}))"
+                        x_expr = f"(in_w-{tw})*(1-{tau})"
+                    elif "ease" in ramping or (config.easing and ramping != "linear"):
                         x_expr = f"(in_w-{tw})*(0.5+0.5*cos(PI*t/{duration:.4f}))"
                     else:
                         x_expr = f"(in_w-{tw})*(1-t/{duration:.4f})"
                 else:
                     # Left to Right (default)
-                    if config.easing:
+                    if "slow-mo" in ramping or "climax" in ramping:
+                        tau = f"((t/{duration:.4f})-(0.75/(2*PI))*sin(2*PI*t/{duration:.4f}))"
+                        x_expr = f"(in_w-{tw})*({tau})"
+                    elif "ease" in ramping or (config.easing and ramping != "linear"):
                         x_expr = f"(in_w-{tw})*(0.5-0.5*cos(PI*t/{duration:.4f}))"
                     else:
                         x_expr = f"(in_w-{tw})*(t/{duration:.4f})"
@@ -311,15 +453,23 @@ def generate_panning_video(
                 "-framerate", str(fps),
                 "-t", f"{duration:.3f}",
                 "-i", input_file_for_ffmpeg,
+            ]
+            if audio_input_for_ffmpeg:
+                cmd.extend(["-i", audio_input_for_ffmpeg])
+            cmd.extend([
                 "-vf", vf_str,
                 "-c:v", "libx264",
                 "-preset", config.preset or "medium",
                 "-crf", str(config.crf or 18),
                 "-pix_fmt", "yuv420p",
+            ])
+            if audio_input_for_ffmpeg:
+                cmd.extend(["-c:a", "aac", "-b:a", "192k", "-shortest"])
+            cmd.extend([
                 "-movflags", "+faststart",
                 "-progress", "pipe:1",
                 out_path,
-            ]
+            ])
 
         if progress_callback:
             progress_callback(0.05, "Initializing video render...")
@@ -380,5 +530,11 @@ def generate_panning_video(
         if temp_image_path and os.path.exists(temp_image_path):
             try:
                 os.unlink(temp_image_path)
+            except Exception:
+                pass
+        # Clean up temporary audio file
+        if temp_audio_path and os.path.exists(temp_audio_path):
+            try:
+                os.unlink(temp_audio_path)
             except Exception:
                 pass

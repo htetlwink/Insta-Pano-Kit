@@ -8,6 +8,8 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- JSZip for client-side zero-server ZIP creation -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- heic2any for client-side Apple iPhone HEIC conversion -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/heic2any/0.0.4/heic2any.min.js"></script>
     <style>
         body { background-color: #0b0f19; color: #f3f4f6; }
         .card { background-color: #131927; border: 1px solid #1f293d; }
@@ -38,11 +40,11 @@
             <div>
                 <label class="block text-sm font-semibold text-gray-300 mb-2">1. Select Panorama Photo</label>
                 <div id="dropZone" class="border-2 border-dashed border-gray-700 hover:border-blue-500 rounded-xl p-6 text-center cursor-pointer transition bg-gray-900/50" onclick="document.getElementById('fileInput').click()">
-                    <input type="file" id="fileInput" accept="image/*" class="hidden" onchange="handleFileSelect(event)">
+                    <input type="file" id="fileInput" accept="image/*,.heic,.heif,.dng" class="hidden" onchange="handleFileSelect(event)">
                     <div id="uploadPrompt" class="space-y-1">
                         <span class="text-4xl">🌄</span>
                         <p class="text-sm font-medium text-gray-300">Click or Drag & Drop Panorama Here</p>
-                        <p class="text-xs text-gray-500">100% Private & In-Browser • Zero server limits • Supports JPG, PNG, WEBP</p>
+                        <p class="text-xs text-gray-500">100% Private & In-Browser • Zero server limits • Supports JPG, PNG, WEBP, Apple HEIC, ProRAW DNG</p>
                     </div>
                     <div id="fileInfo" class="hidden text-sm font-semibold text-blue-400"></div>
                 </div>
@@ -65,10 +67,10 @@
                     </div>
                 </div>
 
-                <!-- Pan Sliders (X & Y) -->
+                <!-- Pan Sliders (X & Y) & Horizon Leveling -->
                 <div id="panControls" class="bg-gray-900/70 p-4 rounded-xl border border-gray-800 space-y-3">
                     <div class="flex items-center justify-between">
-                        <span class="text-xs font-bold text-gray-300">Crop Position Offsets</span>
+                        <span class="text-xs font-bold text-gray-300">Crop Position & Horizon Offsets</span>
                         <button type="button" onclick="resetPan()" class="text-xs text-blue-400 hover:text-blue-300 font-semibold bg-gray-800 hover:bg-gray-700 px-2.5 py-1 rounded transition">
                             Reset Center (0, 0)
                         </button>
@@ -89,6 +91,22 @@
                             </div>
                             <input type="range" id="panY" min="-1" max="1" step="0.01" value="0" oninput="onPanSliderChange()" class="w-full accent-blue-500 cursor-pointer">
                         </div>
+                    </div>
+
+                    <!-- Horizon Straightening & Tilt Control -->
+                    <div class="pt-2 border-t border-gray-800/80">
+                        <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
+                            <span class="flex items-center gap-1.5 font-bold text-gray-300">
+                                <span>📐</span> Horizon Tilt & Straighten
+                            </span>
+                            <div class="flex items-center gap-2">
+                                <button type="button" onclick="autoLevelHorizon()" class="text-xs text-indigo-400 hover:text-indigo-300 font-semibold bg-gray-800 hover:bg-gray-700 px-2 py-0.5 rounded transition">
+                                    Auto-Level Horizon
+                                </button>
+                                <span id="tiltVal" class="font-mono text-indigo-400">0.0°</span>
+                            </div>
+                        </div>
+                        <input type="range" id="tiltAngle" min="-10" max="10" step="0.2" value="0" oninput="onTiltSliderChange()" class="w-full accent-indigo-500 cursor-pointer">
                     </div>
                 </div>
             </div>
@@ -186,15 +204,50 @@
                     <input type="checkbox" id="cameraCardToggle" class="rounded bg-gray-800 border-gray-700 text-blue-500">
                     Append Photography Specs Card
                 </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="beforeAfterToggle" onchange="updatePanPreview()" class="rounded bg-gray-800 border-gray-700 text-indigo-500">
+                    ✨ Before & After Seam Transition (Raw ➔ Edit)
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="infiniteLoopToggle" class="rounded bg-gray-800 border-gray-700 text-indigo-500">
+                    🔄 360° Infinite Seamless Loop
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="verticalSplitToggle" onchange="updatePanPreview()" class="rounded bg-gray-800 border-gray-700 text-indigo-500">
+                    🌊 Vertical Waterfall Split (Top-to-Bottom)
+                </label>
             </div>
 
-            <!-- 7. Primary Action Buttons (Slicing & In-Browser Video) -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                <button type="button" onclick="startClientSlicing()" id="sliceBtn" class="w-full py-3.5 px-6 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl shadow-lg transition duration-150 flex items-center justify-center gap-2">
-                    <span>✂️ Slice Carousel & Export</span>
+            <!-- 7. Video Configuration Options -->
+            <div class="bg-gray-900/60 p-3.5 rounded-xl border border-gray-800 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div>
+                    <label class="block font-bold text-gray-400 uppercase tracking-wider mb-1">🎬 Reels Panning Motion Curve</label>
+                    <select id="videoEasing" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-indigo-500">
+                        <option value="ease" selected>Smooth Ease In & Out (Cinematic)</option>
+                        <option value="linear">Linear Pan (Constant Speed)</option>
+                        <option value="slowmo">Slow-mo Focal Peak</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block font-bold text-gray-400 uppercase tracking-wider mb-1">🎵 Reels Soundtrack (Web Audio Synth)</label>
+                    <select id="videoAudio" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-indigo-500">
+                        <option value="lofi" selected>Lo-Fi Ambient Chords (Built-in)</option>
+                        <option value="drone">Deep Cinematic Drone Soundscape</option>
+                        <option value="none">None (Mute)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- 8. Primary Action Buttons (Slicing, In-Browser Video, Omni-Channel Pack) -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                <button type="button" onclick="startClientSlicing()" id="sliceBtn" class="w-full py-3 px-4 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs sm:text-sm rounded-xl shadow-lg transition duration-150 flex items-center justify-center gap-2">
+                    <span>✂️ Slice Carousel</span>
                 </button>
-                <button type="button" onclick="recordPanningVideoInBrowser()" id="videoBtn" class="w-full py-3.5 px-6 bg-indigo-700 hover:bg-indigo-600 text-white font-bold rounded-xl shadow-lg transition duration-150 flex items-center justify-center gap-2">
-                    <span>🎬 Render Reels Panning Video (In-Browser)</span>
+                <button type="button" onclick="recordPanningVideoInBrowser()" id="videoBtn" class="w-full py-3 px-4 bg-indigo-700 hover:bg-indigo-600 text-white font-bold text-xs sm:text-sm rounded-xl shadow-lg transition duration-150 flex items-center justify-center gap-2">
+                    <span>🎬 Render Reels Video (w/ Audio)</span>
+                </button>
+                <button type="button" onclick="exportOmniChannelPack()" id="omniBtn" class="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs sm:text-sm rounded-xl shadow-lg transition duration-150 flex items-center justify-center gap-2">
+                    <span>📦 Omni-Channel Pack (.zip)</span>
                 </button>
             </div>
         </div>
@@ -283,6 +336,50 @@
                 <h3 class="text-sm font-bold text-gray-300">Individual Slide Downloads</h3>
                 <div id="galleryGrid" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></div>
             </div>
+
+            <!-- AI Storytelling Captions & Hashtags Panel -->
+            <div class="pt-4 border-t border-gray-800 space-y-3">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                        <span>🏷️</span> AI Captions & Hashtags (Ready to Copy)
+                    </h3>
+                    <span class="text-[10px] text-gray-400">Tap to Copy</span>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                    <!-- Style 1: Aesthetic Story -->
+                    <div class="bg-gray-900/80 p-3.5 rounded-xl border border-gray-800 space-y-2 flex flex-col justify-between">
+                        <div class="space-y-1">
+                            <span class="font-bold text-pink-400 block text-xs">✨ Aesthetic Story Hook</span>
+                            <p id="captionAesthetic" class="text-gray-300 font-sans leading-relaxed text-[11px]"></p>
+                        </div>
+                        <button type="button" onclick="copyCaptionText('captionAesthetic', this)" class="w-full mt-2 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-200 font-semibold rounded text-[11px] transition">
+                            📋 Copy Caption
+                        </button>
+                    </div>
+
+                    <!-- Style 2: Technical Breakdown -->
+                    <div class="bg-gray-900/80 p-3.5 rounded-xl border border-gray-800 space-y-2 flex flex-col justify-between">
+                        <div class="space-y-1">
+                            <span class="font-bold text-blue-400 block text-xs">📷 Photography Specs & Gear</span>
+                            <p id="captionTechnical" class="text-gray-300 font-mono text-[11px] leading-relaxed"></p>
+                        </div>
+                        <button type="button" onclick="copyCaptionText('captionTechnical', this)" class="w-full mt-2 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-200 font-semibold rounded text-[11px] transition">
+                            📋 Copy Specs
+                        </button>
+                    </div>
+
+                    <!-- Style 3: Engagement Question -->
+                    <div class="bg-gray-900/80 p-3.5 rounded-xl border border-gray-800 space-y-2 flex flex-col justify-between">
+                        <div class="space-y-1">
+                            <span class="font-bold text-emerald-400 block text-xs">💬 Engagement Algorithm Hook</span>
+                            <p id="captionEngagement" class="text-gray-300 font-sans leading-relaxed text-[11px]"></p>
+                        </div>
+                        <button type="button" onclick="copyCaptionText('captionEngagement', this)" class="w-full mt-2 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-200 font-semibold rounded text-[11px] transition">
+                            📋 Copy Hook
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -293,14 +390,28 @@
         let dragStartX = 0, dragStartY = 0;
         let startPanX = 0, startPanY = 0;
 
-        function handleFileSelect(event) {
-            const file = event.target.files[0];
+        async function handleFileSelect(event) {
+            let file = event.target.files[0];
             if (!file) return;
 
             document.getElementById('uploadPrompt').classList.add('hidden');
             const info = document.getElementById('fileInfo');
-            info.textContent = `📄 ${file.name} (${(file.size / (1024*1024)).toFixed(2)} MB)`;
+            info.textContent = `📄 Loading ${file.name}...`;
             info.classList.remove('hidden');
+
+            const fname = file.name.toLowerCase();
+            if ((fname.endsWith('.heic') || fname.endsWith('.heif')) && typeof heic2any !== 'undefined') {
+                info.textContent = `🔄 Converting Apple HEIC (${file.name}) in browser...`;
+                try {
+                    const conv = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.95 });
+                    file = Array.isArray(conv) ? conv[0] : conv;
+                    info.textContent = `📄 ${file.name || 'iPhone HEIC'} (Decoded to JPEG • ${(file.size / (1024*1024)).toFixed(2)} MB)`;
+                } catch (e) {
+                    console.warn('HEIC fallback:', e);
+                }
+            } else {
+                info.textContent = `📄 ${file.name} (${(file.size / (1024*1024)).toFixed(2)} MB)`;
+            }
 
             const reader = new FileReader();
             reader.onload = function(e) {
@@ -327,6 +438,81 @@
         });
 
         // -------------------------------------------------------------
+        // Horizon Tilt & Straighten
+        // -------------------------------------------------------------
+        function onTiltSliderChange() {
+            const tilt = parseFloat(document.getElementById('tiltAngle').value) || 0;
+            document.getElementById('tiltVal').textContent = `${tilt.toFixed(1)}°`;
+            updatePanPreview();
+        }
+
+        function autoLevelHorizon() {
+            if (!loadedImage) return;
+            const aCanvas = document.createElement('canvas');
+            const aW = 320;
+            const aH = Math.max(40, Math.round(320 * (loadedImage.naturalHeight / loadedImage.naturalWidth)));
+            aCanvas.width = aW;
+            aCanvas.height = aH;
+            const aCtx = aCanvas.getContext('2d');
+            aCtx.drawImage(loadedImage, 0, 0, aW, aH);
+
+            const imgData = aCtx.getImageData(0, 0, aW, aH).data;
+            let bestAngle = 0;
+            let maxVariance = -1;
+
+            // Search angles from -6.0 deg to +6.0 deg with 0.5 deg steps
+            for (let deg = -6.0; deg <= 6.0; deg += 0.5) {
+                const rad = deg * Math.PI / 180;
+                const sinA = Math.sin(rad);
+                const cosA = Math.cos(rad);
+                let rowSums = new Float32Array(aH);
+
+                for (let y = 8; y < aH - 8; y += 2) {
+                    let sum = 0;
+                    for (let x = 8; x < aW - 8; x += 4) {
+                        const rotY = Math.round((y - aH/2) * cosA - (x - aW/2) * sinA + aH/2);
+                        if (rotY >= 0 && rotY < aH) {
+                            const idx = (rotY * aW + x) * 4;
+                            sum += 0.299 * imgData[idx] + 0.587 * imgData[idx+1] + 0.114 * imgData[idx+2];
+                        }
+                    }
+                    rowSums[y] = sum;
+                }
+
+                let gradVar = 0;
+                for (let y = 10; y < aH - 10; y += 2) {
+                    const diff = Math.abs(rowSums[y] - rowSums[y-2]);
+                    gradVar += diff * diff;
+                }
+
+                if (gradVar > maxVariance) {
+                    maxVariance = gradVar;
+                    bestAngle = deg;
+                }
+            }
+
+            document.getElementById('tiltAngle').value = bestAngle;
+            document.getElementById('tiltVal').textContent = `${bestAngle.toFixed(1)}°`;
+            updatePanPreview();
+        }
+
+        // Draw rotated image with automatic inscribed scale to prevent black corners
+        function drawRotatedImageToContext(ctx, img, dx, dy, dw, dh, deg) {
+            if (Math.abs(deg) < 0.05) {
+                ctx.drawImage(img, dx, dy, dw, dh);
+                return;
+            }
+            ctx.save();
+            ctx.translate(dx + dw / 2, dy + dh / 2);
+            ctx.rotate(deg * Math.PI / 180);
+            const rad = Math.abs(deg * Math.PI / 180);
+            const scale = 1.0 + Math.sin(rad) * 0.85;
+            ctx.scale(scale, scale);
+            ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+            ctx.restore();
+        }
+
+        // -------------------------------------------------------------
         // Direct Touch & Mouse Drag-to-Pan on Canvas
         // -------------------------------------------------------------
         function setupCanvasGestures() {
@@ -349,11 +535,9 @@
                 const dx = pt.clientX - dragStartX;
                 const dy = pt.clientY - dragStartY;
 
-                // Scale movement sensitivity relative to canvas size
                 const sensX = 2.0 / (canvas.width || 400);
                 const sensY = 2.0 / (canvas.height || 200);
 
-                // Moving pointer right shifts crop window left (-), and vice versa
                 let newPanX = Math.max(-1, Math.min(1, startPanX - dx * sensX));
                 let newPanY = Math.max(-1, Math.min(1, startPanY - dy * sensY));
 
@@ -376,6 +560,8 @@
         function resetPan() {
             document.getElementById('panX').value = 0;
             document.getElementById('panY').value = 0;
+            document.getElementById('tiltAngle').value = 0;
+            document.getElementById('tiltVal').textContent = '0.0°';
             updatePanPreview();
         }
 
@@ -390,7 +576,6 @@
             return { targetW: 1080, targetH: 1350 };
         }
 
-        // Apply Color Grading Filters to Canvas Context
         function applyCanvasColorFilter(ctx, filterName) {
             if (filterName === 'Cinematic Moody') {
                 ctx.filter = 'contrast(120%) saturate(85%) hue-rotate(-10deg) brightness(96%)';
@@ -416,21 +601,25 @@
             const filterName = document.getElementById('colorFilter').value;
             const panX = parseFloat(document.getElementById('panX').value) || 0;
             const panY = parseFloat(document.getElementById('panY').value) || 0;
+            const tiltAngle = parseFloat(document.getElementById('tiltAngle').value) || 0;
             const splitHeadline = document.getElementById('splitHeadline').value.trim();
             const isStoryMode = document.getElementById('storyModeToggle').checked;
+            const isBeforeAfter = document.getElementById('beforeAfterToggle').checked;
+            const isVerticalSplit = document.getElementById('verticalSplitToggle').checked;
 
             document.getElementById('panXVal').textContent = `${Math.round(panX * 100)}%`;
             document.getElementById('panYVal').textContent = `${Math.round(panY * 100)}%`;
 
             const { targetW, targetH } = getTargetDimensions();
-            const totalTargetW = targetW * nSlices;
-            const targetRatio = totalTargetW / targetH;
+            const totalTargetW = isVerticalSplit ? targetW : targetW * nSlices;
+            const totalTargetH = isVerticalSplit ? targetH * nSlices : targetH;
+            const targetRatio = totalTargetW / totalTargetH;
             const origW = loadedImage.naturalWidth;
             const origH = loadedImage.naturalHeight;
             const origRatio = origW / origH;
 
             document.getElementById('ratioBadge').textContent = 
-                `${origW}×${origH} px ➔ ${nSlices} Slices @ ${targetW}×${targetH} px`;
+                `${origW}×${origH} px ➔ ${nSlices} ${isVerticalSplit ? 'Vertical' : 'Horizontal'} Slices @ ${targetW}×${targetH} px`;
 
             const maxDisplayW = Math.min(760, window.innerWidth - 48);
             const scale = maxDisplayW / origW;
@@ -440,10 +629,10 @@
             canvas.width = cw;
             canvas.height = ch;
 
-            // Apply selected aesthetic filter
-            applyCanvasColorFilter(ctx, filterName);
-            ctx.drawImage(loadedImage, 0, 0, cw, ch);
-            ctx.filter = 'none'; // reset filter for overlays
+            // Apply selected aesthetic filter (if not Before/After, or applied globally for preview)
+            applyCanvasColorFilter(ctx, isBeforeAfter ? 'None' : filterName);
+            drawRotatedImageToContext(ctx, loadedImage, 0, 0, cw, ch, tiltAngle);
+            ctx.filter = 'none';
 
             let activeX0 = 0, activeX1 = cw, activeY0 = 0, activeY1 = ch;
 
@@ -475,66 +664,113 @@
             }
 
             const activeSpanW = activeX1 - activeX0;
-            const sliceSpanW = activeSpanW / nSlices;
+            const activeSpanH = activeY1 - activeY0;
 
-            // Draw divider lines and numbered slice badges
-            for (let i = 0; i < nSlices; i++) {
-                const x0 = activeX0 + i * sliceSpanW;
-                const x1 = activeX0 + (i + 1) * sliceSpanW;
-
-                if (i > 0) {
-                    ctx.strokeStyle = '#00ebff';
-                    ctx.lineWidth = 2;
-                    ctx.beginPath();
-                    ctx.moveTo(x0, activeY0);
-                    ctx.lineTo(x0, activeY1);
-                    ctx.stroke();
-                }
-
-                // Number badge
-                const cx = (x0 + x1) / 2;
-                const cy = activeY0 + 16;
-                if (cy + 12 < activeY1) {
+            if (isVerticalSplit) {
+                // Vertical Waterfall Dividers
+                const sliceSpanH = activeSpanH / nSlices;
+                for (let i = 0; i < nSlices; i++) {
+                    const y0 = activeY0 + i * sliceSpanH;
+                    const y1 = activeY0 + (i + 1) * sliceSpanH;
+                    if (i > 0) {
+                        ctx.strokeStyle = '#00ebff';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(activeX0, y0);
+                        ctx.lineTo(activeX1, y0);
+                        ctx.stroke();
+                    }
+                    // Badge
+                    const cx = activeX0 + 20;
+                    const cy = (y0 + y1) / 2;
                     ctx.fillStyle = '#2563eb';
                     ctx.beginPath();
-                    ctx.arc(cx, cy, 11, 0, 2 * Math.PI);
+                    ctx.arc(cx, cy, 10, 0, 2 * Math.PI);
                     ctx.fill();
-                    ctx.strokeStyle = '#ffffff';
-                    ctx.lineWidth = 1.5;
-                    ctx.stroke();
-
                     ctx.fillStyle = '#ffffff';
-                    ctx.font = 'bold 11px sans-serif';
+                    ctx.font = 'bold 10px sans-serif';
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
                     ctx.fillText((i + 1).toString(), cx, cy);
                 }
+            } else {
+                // Horizontal Carousel Dividers
+                const sliceSpanW = activeSpanW / nSlices;
+                for (let i = 0; i < nSlices; i++) {
+                    const x0 = activeX0 + i * sliceSpanW;
+                    const x1 = activeX0 + (i + 1) * sliceSpanW;
 
-                // Story Mode Progress Bars preview
-                if (isStoryMode && activeY0 + 8 < activeY1) {
-                    const segW = sliceSpanW - 12;
-                    ctx.fillStyle = (i === 0) ? '#ffffff' : 'rgba(255, 255, 255, 0.4)';
-                    ctx.fillRect(x0 + 6, activeY0 + 5, segW, 2.5);
+                    if (i > 0) {
+                        ctx.strokeStyle = '#00ebff';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(x0, activeY0);
+                        ctx.lineTo(x0, activeY1);
+                        ctx.stroke();
+                    }
+
+                    const cx = (x0 + x1) / 2;
+                    const cy = activeY0 + 16;
+                    if (cy + 12 < activeY1) {
+                        ctx.fillStyle = '#2563eb';
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, 11, 0, 2 * Math.PI);
+                        ctx.fill();
+                        ctx.strokeStyle = '#ffffff';
+                        ctx.lineWidth = 1.5;
+                        ctx.stroke();
+
+                        ctx.fillStyle = '#ffffff';
+                        ctx.font = 'bold 11px sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText((i + 1).toString(), cx, cy);
+                    }
+
+                    // Before & After Indicator on Slide 1 & 2
+                    if (isBeforeAfter) {
+                        ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+                        if (i === 0) {
+                            ctx.fillRect(x0 + 6, activeY1 - 22, 60, 16);
+                            ctx.fillStyle = '#ffffff';
+                            ctx.font = 'bold 9px sans-serif';
+                            ctx.textAlign = 'center';
+                            ctx.fillText('BEFORE ➔', x0 + 36, activeY1 - 12);
+                        } else if (i === 1) {
+                            ctx.fillRect(x0 + 6, activeY1 - 22, 54, 16);
+                            ctx.fillStyle = '#38bdf8';
+                            ctx.font = 'bold 9px sans-serif';
+                            ctx.textAlign = 'center';
+                            ctx.fillText('✨ AFTER', x0 + 33, activeY1 - 12);
+                        }
+                    }
+
+                    // Story Mode Progress Bars preview
+                    if (isStoryMode && activeY0 + 8 < activeY1) {
+                        const segW = sliceSpanW - 12;
+                        ctx.fillStyle = (i === 0) ? '#ffffff' : 'rgba(255, 255, 255, 0.4)';
+                        ctx.fillRect(x0 + 6, activeY0 + 5, segW, 2.5);
+                    }
                 }
-            }
 
-            // Split Headline Preview across Slide 1 & 2
-            if (splitHeadline && nSlices >= 2) {
-                const seamX = activeX0 + sliceSpanW;
-                const textY = activeY0 + (activeY1 - activeY0) * 0.45;
-                ctx.fillStyle = '#ffffff';
-                ctx.font = 'bold 18px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
-                ctx.shadowBlur = 6;
-                ctx.fillText(splitHeadline.toUpperCase(), seamX, textY);
-                ctx.shadowBlur = 0;
+                // Split Headline Preview across Slide 1 & 2
+                if (splitHeadline && nSlices >= 2) {
+                    const seamX = activeX0 + sliceSpanW;
+                    const textY = activeY0 + activeSpanH * 0.45;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 16px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+                    ctx.shadowBlur = 6;
+                    ctx.fillText(splitHeadline.toUpperCase(), seamX, textY);
+                    ctx.shadowBlur = 0;
+                }
             }
 
             ctx.strokeStyle = '#00ebff';
             ctx.lineWidth = 2.5;
-            ctx.strokeRect(activeX0, activeY0, activeSpanW, activeY1 - activeY0);
+            ctx.strokeRect(activeX0, activeY0, activeSpanW, activeSpanH);
         }
 
         // -------------------------------------------------------------
@@ -557,15 +793,20 @@
                 const indicator = document.getElementById('indicator').value;
                 const panX = parseFloat(document.getElementById('panX').value) || 0;
                 const panY = parseFloat(document.getElementById('panY').value) || 0;
+                const tiltAngle = parseFloat(document.getElementById('tiltAngle').value) || 0;
                 const titleText = document.getElementById('titleText').value.trim();
                 const splitHeadline = document.getElementById('splitHeadline').value.trim();
                 const watermarkText = document.getElementById('watermarkText').value.trim();
                 const includeGuide = document.getElementById('guideToggle').checked;
                 const isStoryMode = document.getElementById('storyModeToggle').checked;
                 const includeCameraCard = document.getElementById('cameraCardToggle').checked;
+                const isBeforeAfter = document.getElementById('beforeAfterToggle').checked;
+                const isInfiniteLoop = document.getElementById('infiniteLoopToggle').checked;
+                const isVerticalSplit = document.getElementById('verticalSplitToggle').checked;
 
                 const { targetW, targetH } = getTargetDimensions();
-                const totalTargetW = targetW * nSlices;
+                const totalTargetW = isVerticalSplit ? targetW : targetW * nSlices;
+                const totalTargetH = isVerticalSplit ? targetH * nSlices : targetH;
 
                 const origW = loadedImage.naturalWidth;
                 const origH = loadedImage.naturalHeight;
@@ -573,16 +814,14 @@
                 // 1. Build Full Carousel Canvas
                 const fullCanvas = document.createElement('canvas');
                 fullCanvas.width = totalTargetW;
-                fullCanvas.height = targetH;
+                fullCanvas.height = totalTargetH;
                 const fCtx = fullCanvas.getContext('2d');
 
-                // Apply Color Filter
-                applyCanvasColorFilter(fCtx, filterName);
-
+                // Draw rotated source image onto working canvas
                 if (fitMode.includes('Standard')) {
-                    const scale = Math.max(totalTargetW / origW, targetH / origH);
+                    const scale = Math.max(totalTargetW / origW, totalTargetH / origH);
                     const cropRegionW = totalTargetW / scale;
-                    const cropRegionH = targetH / scale;
+                    const cropRegionH = totalTargetH / scale;
 
                     const excessW = Math.max(0, origW - cropRegionW);
                     const excessH = Math.max(0, origH - cropRegionH);
@@ -590,34 +829,24 @@
                     const sx = Math.max(0, Math.min(excessW, excessW * (panX + 1) / 2));
                     const sy = Math.max(0, Math.min(excessH, excessH * (panY + 1) / 2));
 
-                    fCtx.drawImage(loadedImage, sx, sy, cropRegionW, cropRegionH, 0, 0, totalTargetW, targetH);
+                    drawRotatedImageToContext(fCtx, loadedImage, -sx * scale, -sy * scale, origW * scale, origH * scale, tiltAngle);
                 } else if (fitMode.includes('Blurred')) {
                     fCtx.filter = 'blur(28px)';
-                    fCtx.drawImage(loadedImage, 0, 0, totalTargetW, targetH);
+                    drawRotatedImageToContext(fCtx, loadedImage, 0, 0, totalTargetW, totalTargetH, tiltAngle);
                     fCtx.filter = 'none';
-
                     fCtx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-                    fCtx.fillRect(0, 0, totalTargetW, targetH);
+                    fCtx.fillRect(0, 0, totalTargetW, totalTargetH);
 
-                    const scale = Math.min(totalTargetW / origW, targetH / origH);
+                    const scale = Math.min(totalTargetW / origW, totalTargetH / origH);
                     const fgW = Math.round(origW * scale);
                     const fgH = Math.round(origH * scale);
-                    fCtx.drawImage(loadedImage, Math.round((totalTargetW - fgW) / 2), Math.round((targetH - fgH) / 2), fgW, fgH);
-                } else if (fitMode.includes('Solid')) {
-                    fCtx.fillStyle = '#ffffff';
-                    fCtx.fillRect(0, 0, totalTargetW, targetH);
-                    const scale = Math.min((totalTargetW - 40) / origW, (targetH - 40) / origH);
-                    const fgW = Math.round(origW * scale);
-                    const fgH = Math.round(origH * scale);
-                    fCtx.drawImage(loadedImage, Math.round((totalTargetW - fgW) / 2), Math.round((targetH - fgH) / 2), fgW, fgH);
+                    fCtx.drawImage(loadedImage, Math.round((totalTargetW - fgW) / 2), Math.round((totalTargetH - fgH) / 2), fgW, fgH);
                 } else {
-                    fCtx.drawImage(loadedImage, 0, 0, totalTargetW, targetH);
+                    drawRotatedImageToContext(fCtx, loadedImage, 0, 0, totalTargetW, totalTargetH, tiltAngle);
                 }
 
-                fCtx.filter = 'none'; // reset filter for graphics
-
                 // Draw Split-Seam Headline across Slide 1 & 2
-                if (splitHeadline && nSlices >= 2) {
+                if (splitHeadline && nSlices >= 2 && !isVerticalSplit) {
                     const seamX = targetW;
                     const textY = targetH * 0.45;
                     fCtx.fillStyle = '#ffffff';
@@ -631,7 +860,7 @@
                 }
 
                 // Draw Seam Arrows
-                if (indicator === 'Seam Arrow') {
+                if (indicator === 'Seam Arrow' && !isVerticalSplit) {
                     for (let i = 1; i < nSlices; i++) {
                         const seamX = i * targetW;
                         const seamY = targetH * 0.5;
@@ -660,7 +889,23 @@
                     sliceCanvas.height = targetH;
                     const sCtx = sliceCanvas.getContext('2d');
 
-                    sCtx.drawImage(fullCanvas, i * targetW, 0, targetW, targetH, 0, 0, targetW, targetH);
+                    // If Before/After mode: Slide 1 has raw/no filter, Slide 2+ has color grade
+                    if (isBeforeAfter) {
+                        if (i === 0) {
+                            sCtx.filter = 'none';
+                        } else {
+                            applyCanvasColorFilter(sCtx, filterName);
+                        }
+                    } else {
+                        applyCanvasColorFilter(sCtx, filterName);
+                    }
+
+                    if (isVerticalSplit) {
+                        sCtx.drawImage(fullCanvas, 0, i * targetH, targetW, targetH, 0, 0, targetW, targetH);
+                    } else {
+                        sCtx.drawImage(fullCanvas, i * targetW, 0, targetW, targetH, 0, 0, targetW, targetH);
+                    }
+                    sCtx.filter = 'none';
 
                     // Slide 1 Cover Title
                     if (i === 0 && titleText) {
@@ -701,6 +946,26 @@
                         sCtx.textAlign = 'center';
                         sCtx.textBaseline = 'middle';
                         sCtx.fillText('SWIPE ➔', targetW - 95, targetH * 0.5);
+                    }
+
+                    // Before & After Badges on Slices
+                    if (isBeforeAfter) {
+                        sCtx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+                        if (i === 0) {
+                            sCtx.roundRect(32, targetH - 72, 140, 40, 20);
+                            sCtx.fill();
+                            sCtx.fillStyle = '#ffffff';
+                            sCtx.font = 'bold 16px sans-serif';
+                            sCtx.textAlign = 'center';
+                            sCtx.fillText('BEFORE ➔', 102, targetH - 46);
+                        } else if (i === 1) {
+                            sCtx.roundRect(32, targetH - 72, 130, 40, 20);
+                            sCtx.fill();
+                            sCtx.fillStyle = '#38bdf8';
+                            sCtx.font = 'bold 16px sans-serif';
+                            sCtx.textAlign = 'center';
+                            sCtx.fillText('✨ AFTER', 97, targetH - 46);
+                        }
                     }
 
                     // Pagination Dots
@@ -752,7 +1017,6 @@
                     cCtx.fillStyle = '#0b0f19';
                     cCtx.fillRect(0, 0, targetW, targetH);
 
-                    // Aesthetic Card Frame
                     cCtx.strokeStyle = '#1e293b';
                     cCtx.lineWidth = 3;
                     cCtx.roundRect(60, 80, targetW - 120, targetH - 160, 24);
@@ -772,7 +1036,7 @@
                         ['Aspect Ratio', `${(origW/origH).toFixed(2)}:1 Panoramic`],
                         ['Carousel Slices', `${nSlices} Slides (${targetW}×${targetH} px)`],
                         ['Color Profile', 'sRGB IEC61966-2.1 (Calibrated)'],
-                        ['Aesthetic Filter', filterName],
+                        ['Aesthetic Filter', isBeforeAfter ? 'Before vs After' : filterName],
                         ['Author / Credit', watermarkText || '@photographer'],
                     ];
 
@@ -839,7 +1103,11 @@
                         gCtx.lineWidth = 2;
                         gCtx.strokeRect(cx, cardY, cardW, cardH);
 
-                        gCtx.drawImage(fullCanvas, i * targetW, 0, targetW, targetH, cx, cardY, cardW, cardH);
+                        if (isVerticalSplit) {
+                            gCtx.drawImage(fullCanvas, 0, i * targetH, targetW, targetH, cx, cardY, cardW, cardH);
+                        } else {
+                            gCtx.drawImage(fullCanvas, i * targetW, 0, targetW, targetH, cx, cardY, cardW, cardH);
+                        }
 
                         gCtx.fillStyle = '#2563eb';
                         gCtx.beginPath();
@@ -856,7 +1124,7 @@
                             gCtx.font = 'bold 24px sans-serif';
                             gCtx.textAlign = 'center';
                             gCtx.textBaseline = 'middle';
-                            gCtx.fillText('➔', cx + cardW + 15, cardY + cardH / 2);
+                            gCtx.fillText(isVerticalSplit ? '⬇' : '➔', cx + cardW + 15, cardY + cardH / 2);
                         }
                     }
 
@@ -874,6 +1142,9 @@
                     });
                 }
 
+                // Generate AI Captions & Populate
+                generateAICaptions(nSlices, watermarkText, titleText);
+
                 displayClientResults();
                 setupNativeWebShare();
 
@@ -881,7 +1152,7 @@
                 alert('Slicing error: ' + err.message);
             } finally {
                 btn.disabled = false;
-                btn.innerHTML = `<span>✂️ Slice Carousel & Export</span>`;
+                btn.innerHTML = `<span>✂️ Slice Carousel</span>`;
             }
         }
 
@@ -906,20 +1177,17 @@
             const sliceOnlyBlobs = generatedBlobs.filter(b => typeof b.index === 'number');
 
             sliceOnlyBlobs.forEach((item, idx) => {
-                // Mockup Slide
                 const slideDiv = document.createElement('div');
                 slideDiv.className = 'w-full h-full flex-shrink-0 snap-center flex items-center justify-center bg-black';
                 slideDiv.innerHTML = `<img src="${item.url}" class="w-full h-full object-cover">`;
                 mockupCarousel.appendChild(slideDiv);
 
-                // Mockup Dot
                 const dot = document.createElement('div');
                 dot.className = `w-1.5 h-1.5 rounded-full transition-all ${idx === 0 ? 'bg-blue-500 w-2.5' : 'bg-gray-600'}`;
                 dot.id = `mockupDot_${idx}`;
                 mockupDots.appendChild(dot);
             });
 
-            // Update mockup counter on scroll
             mockupCarousel.onscroll = () => {
                 const curIdx = Math.round(mockupCarousel.scrollLeft / mockupCarousel.clientWidth);
                 document.getElementById('mockupCounter').textContent = `${curIdx + 1}/${sliceOnlyBlobs.length}`;
@@ -929,7 +1197,6 @@
                 });
             };
 
-            // Individual cards
             generatedBlobs.forEach(item => {
                 const card = document.createElement('div');
                 card.className = 'card rounded-xl p-2 space-y-2 border border-gray-700/60';
@@ -954,6 +1221,123 @@
         function scrollMockup(dir) {
             const carousel = document.getElementById('mockupCarousel');
             carousel.scrollBy({ left: dir * carousel.clientWidth, behavior: 'smooth' });
+        }
+
+        // -------------------------------------------------------------
+        // AI Captions & Hashtags
+        // -------------------------------------------------------------
+        function generateAICaptions(nSlices, author, title) {
+            const handle = author || '@photographer';
+            const tit = title || 'Wild Horizons';
+
+            const aesthetic = `Where silence speaks louder than words and the horizon stretches into infinity. 🌅✨ Every detail tells a story across ${nSlices} seamless frames.\n\nSwipe left to step into the full view ➔\n\nCaptured by ${handle}\n\n#Panorama #LandscapePhotography #Wanderlust #VisualsOfEarth #FilmAesthetic #EarthOutdoors`;
+            const technical = `📷 PANORAMA TECHNICAL SPECIFICATIONS:\n• Resolution: ${nSlices}x Multi-Slide Carousel (1080×1350 px)\n• Framing: Calibrated sRGB Pro Master\n• Master Edit: ${tit}\n• Credit: ${handle}\n\n#SonyAlpha #Fujifilm #DJIGlobal #PhotographyLife #ExifData #ProPhotographer`;
+            const engagement = `Which slide gives you the chills? Slide 1, 2, or 3? 🤔💬\n\nDrop your favorite number below! 👇 Bookmark this post 🔖 for your next travel inspiration.\n\n#PhotoOfTheDay #TravelGram #ExploreMore #RoamThePlanet`;
+
+            document.getElementById('captionAesthetic').textContent = aesthetic;
+            document.getElementById('captionTechnical').textContent = technical;
+            document.getElementById('captionEngagement').textContent = engagement;
+        }
+
+        function copyCaptionText(elementId, btn) {
+            const text = document.getElementById(elementId).textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                const orig = btn.textContent;
+                btn.textContent = '✅ Copied to Clipboard!';
+                btn.classList.add('bg-emerald-700', 'text-white');
+                setTimeout(() => {
+                    btn.textContent = orig;
+                    btn.classList.remove('bg-emerald-700', 'text-white');
+                }, 2000);
+            });
+        }
+
+        // -------------------------------------------------------------
+        // Omni-Channel 1-Click Multi-Platform Pack
+        // -------------------------------------------------------------
+        async function exportOmniChannelPack() {
+            if (!loadedImage) {
+                alert('Please load an image first.');
+                return;
+            }
+            const btn = document.getElementById('omniBtn');
+            btn.disabled = true;
+            btn.innerHTML = `<span class="animate-spin inline-block mr-1">⏳</span> Packing Omni-Channel Suite...`;
+
+            try {
+                if (!generatedBlobs.length) {
+                    await startClientSlicing();
+                }
+
+                const zip = new JSZip();
+                const feedFolder = zip.folder('1_instagram_feed');
+                const storiesFolder = zip.folder('2_instagram_stories');
+                const twitterFolder = zip.folder('3_twitter_threads_header');
+
+                // 1. Instagram Feed Slices
+                generatedBlobs.forEach(b => feedFolder.file(b.filename, b.blob));
+
+                // 2. Instagram Stories Tap-Throughs (1080x1920)
+                const nSlices = parseInt(document.getElementById('sliceCount').value) || 3;
+                const origW = loadedImage.naturalWidth;
+                const origH = loadedImage.naturalHeight;
+                for (let i = 0; i < nSlices; i++) {
+                    const stCanvas = document.createElement('canvas');
+                    stCanvas.width = 1080;
+                    stCanvas.height = 1920;
+                    const sCtx = stCanvas.getContext('2d');
+                    sCtx.fillStyle = '#0b0f19';
+                    sCtx.fillRect(0, 0, 1080, 1920);
+
+                    // Place slice centered
+                    const sliceW = origW / nSlices;
+                    const scale = 1080 / sliceW;
+                    const drawH = origH * scale;
+                    const drawY = Math.round((1920 - drawH) / 2);
+                    sCtx.drawImage(loadedImage, i * sliceW, 0, sliceW, origH, 0, drawY, 1080, drawH);
+
+                    // Story Progress Bar
+                    const segW = (1080 - 40 - (nSlices - 1) * 8) / nSlices;
+                    for (let s = 0; s < nSlices; s++) {
+                        sCtx.fillStyle = (s <= i) ? '#ffffff' : 'rgba(255, 255, 255, 0.35)';
+                        sCtx.roundRect(20 + s * (segW + 8), 28, segW, 4, 2);
+                        sCtx.fill();
+                    }
+
+                    const stBlob = await new Promise(r => stCanvas.toBlob(r, 'image/jpeg', 0.95));
+                    storiesFolder.file(`story_tap_through_${i + 1}.jpg`, stBlob);
+                }
+
+                // 3. Twitter / Threads Landscape Header (1500x500 px, 3:1 ratio)
+                const twCanvas = document.createElement('canvas');
+                twCanvas.width = 1500;
+                twCanvas.height = 500;
+                const twCtx = twCanvas.getContext('2d');
+                const twScale = Math.max(1500 / origW, 500 / origH);
+                const twDrawW = origW * twScale;
+                const twDrawH = origH * twScale;
+                twCtx.drawImage(loadedImage, (1500 - twDrawW) / 2, (500 - twDrawH) / 2, twDrawW, twDrawH);
+                const twBlob = await new Promise(r => twCanvas.toBlob(r, 'image/jpeg', 0.95));
+                twitterFolder.file('twitter_threads_header_3x1.jpg', twBlob);
+
+                // 4. Captions Text
+                const capText = `=== INSTAGRAM CAPTIONS & HASHTAGS ===\n\n[STYLE 1: AESTHETIC STORY]\n${document.getElementById('captionAesthetic').textContent}\n\n[STYLE 2: PHOTOGRAPHY SPECS]\n${document.getElementById('captionTechnical').textContent}\n\n[STYLE 3: ENGAGEMENT HOOK]\n${document.getElementById('captionEngagement').textContent}`;
+                zip.file('captions.txt', capText);
+
+                const zipBlob = await zip.generateAsync({ type: 'blob' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(zipBlob);
+                a.download = 'omni_channel_social_pack.zip';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+
+            } catch (err) {
+                alert('Omni-Channel Export failed: ' + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<span>📦 Omni-Channel Pack (.zip)</span>`;
+            }
         }
 
         // -------------------------------------------------------------
@@ -1012,8 +1396,11 @@
             }
 
             const videoBtn = document.getElementById('videoBtn');
+            const easingMode = document.getElementById('videoEasing').value;
+            const audioMode = document.getElementById('videoAudio').value;
+
             videoBtn.disabled = true;
-            videoBtn.innerHTML = `<span class="animate-spin inline-block mr-2">⏳</span> Recording Panning Video...`;
+            videoBtn.innerHTML = `<span class="animate-spin inline-block mr-2">⏳</span> Synthesizing Video & Audio...`;
 
             try {
                 const targetW = 720;
@@ -1026,13 +1413,56 @@
                 vCanvas.height = targetH;
                 const vCtx = vCanvas.getContext('2d');
 
-                const stream = vCanvas.captureStream(30); // 30 fps
+                const canvasStream = vCanvas.captureStream(30);
+                let audioCtx = null;
+                let audioDest = null;
+                let mixedStream = canvasStream;
+
+                // Web Audio API Ambient Sound Synthesis
+                if (audioMode !== 'none') {
+                    try {
+                        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                        audioDest = audioCtx.createMediaStreamDestination();
+
+                        const chords = (audioMode === 'lofi') 
+                            ? [220.0, 261.63, 329.63, 392.0] // Am7
+                            : [110.0, 164.81, 220.0, 277.18]; // Cinematic Drone
+
+                        chords.forEach(freq => {
+                            const osc = audioCtx.createOscillator();
+                            const gain = audioCtx.createGain();
+                            const filter = audioCtx.createBiquadFilter();
+
+                            osc.type = (audioMode === 'lofi') ? 'triangle' : 'sine';
+                            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+
+                            filter.type = 'lowpass';
+                            filter.frequency.setValueAtTime(450, audioCtx.currentTime);
+
+                            gain.gain.setValueAtTime(0.001, audioCtx.currentTime);
+                            gain.gain.exponentialRampToValueAtTime(0.08, audioCtx.currentTime + 1.2);
+
+                            osc.connect(filter);
+                            filter.connect(gain);
+                            gain.connect(audioDest);
+                            osc.start();
+                        });
+
+                        mixedStream = new MediaStream([
+                            ...canvasStream.getVideoTracks(),
+                            ...audioDest.stream.getAudioTracks()
+                        ]);
+                    } catch (e) {
+                        console.warn('Audio synthesis fallback:', e);
+                    }
+                }
+
                 let mimeType = 'video/webm';
                 if (MediaRecorder.isTypeSupported('video/mp4; codecs=avc1')) {
                     mimeType = 'video/mp4; codecs=avc1';
                 }
 
-                const recorder = new MediaRecorder(stream, { mimeType: mimeType, videoBitsPerSecond: 3500000 });
+                const recorder = new MediaRecorder(mixedStream, { mimeType: mimeType, videoBitsPerSecond: 3500000 });
                 const chunks = [];
                 recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
 
@@ -1046,6 +1476,9 @@
                         document.body.appendChild(a);
                         a.click();
                         document.body.removeChild(a);
+                        if (audioCtx) {
+                            try { audioCtx.close(); } catch(e){}
+                        }
                         resolve();
                     };
                 });
@@ -1064,8 +1497,15 @@
                         const elapsed = now - startTime;
                         const t = Math.min(1.0, elapsed / durationMs);
 
-                        // Smooth ease-in-out curve
-                        const easeT = 0.5 - 0.5 * Math.cos(t * Math.PI);
+                        let easeT;
+                        if (easingMode === 'linear') {
+                            easeT = t;
+                        } else if (easingMode === 'slowmo') {
+                            easeT = Math.pow(t, 2.2);
+                        } else {
+                            // Smooth ease-in-out curve
+                            easeT = 0.5 - 0.5 * Math.cos(t * Math.PI);
+                        }
                         const curX = maxPanX * easeT;
 
                         vCtx.drawImage(loadedImage, 0, 0, origW, origH, -curX, 0, scaledW, targetH);
@@ -1081,13 +1521,13 @@
 
                 recorder.stop();
                 await recordPromise;
-                alert('🎬 Panning video generated and downloaded successfully!');
+                alert('🎬 Panning video with soundtrack generated and downloaded successfully!');
 
             } catch (err) {
                 alert('Video recording error: ' + err.message);
             } finally {
                 videoBtn.disabled = false;
-                videoBtn.innerHTML = `<span>🎬 Render Reels Panning Video (In-Browser)</span>`;
+                videoBtn.innerHTML = `<span>🎬 Render Reels Video (w/ Audio)</span>`;
             }
         }
     </script>

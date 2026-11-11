@@ -116,7 +116,7 @@ class VideoExportModal(ctk.CTkToplevel):
 
         # Direction
         dir_box = ctk.CTkFrame(card, fg_color="transparent")
-        dir_box.pack(fill="x", padx=16, pady=(0, 16))
+        dir_box.pack(fill="x", padx=16, pady=(0, 12))
 
         ctk.CTkLabel(dir_box, text="Panning Motion & Direction:", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", pady=(0, 4))
         self.seg_dir = ctk.CTkSegmentedButton(
@@ -127,6 +127,38 @@ class VideoExportModal(ctk.CTkToplevel):
         )
         self.seg_dir.set("Left to Right")
         self.seg_dir.pack(fill="x")
+
+        # Speed Ramping & Audio Row
+        ramp_row = ctk.CTkFrame(card, fg_color="transparent")
+        ramp_row.pack(fill="x", padx=16, pady=(0, 16))
+        ramp_row.columnconfigure(0, weight=1)
+        ramp_row.columnconfigure(1, weight=1)
+
+        # Speed Ramping
+        col_ramp = ctk.CTkFrame(ramp_row, fg_color="transparent")
+        col_ramp.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        ctk.CTkLabel(col_ramp, text="Cinematic Speed Ramping:", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", pady=(0, 4))
+        self.seg_ramping = ctk.CTkSegmentedButton(
+            col_ramp,
+            values=["Ease In & Out", "Linear", "Slow-mo Climax"],
+            font=ctk.CTkFont(size=11),
+            height=28,
+        )
+        self.seg_ramping.set("Ease In & Out")
+        self.seg_ramping.pack(fill="x")
+
+        # Audio Track
+        col_audio = ctk.CTkFrame(ramp_row, fg_color="transparent")
+        col_audio.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+        ctk.CTkLabel(col_audio, text="Ambient Soundscape (Audio):", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", pady=(0, 4))
+        self.seg_audio = ctk.CTkSegmentedButton(
+            col_audio,
+            values=["🎵 Ambient Chords", "🔇 Silent"],
+            font=ctk.CTkFont(size=11),
+            height=28,
+        )
+        self.seg_audio.set("🎵 Ambient Chords")
+        self.seg_audio.pack(fill="x")
 
         # Action & Progress Card
         act_card = ctk.CTkFrame(container, corner_radius=12)
@@ -202,12 +234,15 @@ class VideoExportModal(ctk.CTkToplevel):
             return
 
         fps_val = 60 if "60" in self.seg_fps.get() else 30
+        audio_choice = "ambient" if "Ambient" in self.seg_audio.get() else None
         config = VideoPanConfig(
             target_ratio=self.seg_ratio.get(),
             duration_seconds=float(self.slider_duration.get()),
             fps=fps_val,
             direction=self.seg_dir.get(),
             output_path=save_path,
+            speed_ramping=self.seg_ramping.get(),
+            audio_path=audio_choice,
         )
 
         self.is_rendering = True

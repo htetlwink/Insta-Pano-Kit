@@ -36,7 +36,12 @@ from core.image_engine import (
     save_slices,
     generate_upload_guide,
     apply_color_filter,
+    detect_horizon_tilt,
+    rotate_and_crop,
+    compute_smart_seams,
+    ImageEngine,
 )
+from core.export_engine import export_omni_pack
 from gui.phone_simulator import PhoneSimulatorModal
 from gui.qr_modal import QRTransferModal
 from gui.video_modal import VideoExportModal
@@ -156,6 +161,13 @@ class InstaPanoramaSplitter(ctk.CTk):
         self.upload_guide_var = ctk.BooleanVar(value=True)
         self.story_mode_var = ctk.BooleanVar(value=False)
         self.camera_card_var = ctk.BooleanVar(value=False)
+
+        # Phase 3 Enhancements: Tilt, Seams, Infinite Loop, Waterfall, Before/After
+        self.tilt_angle_var = ctk.DoubleVar(value=0.0)
+        self.split_orientation_var = ctk.StringVar(value="Horizontal Split")
+        self.smart_seams_var = ctk.BooleanVar(value=False)
+        self.infinite_loop_var = ctk.BooleanVar(value=False)
+        self.before_after_var = ctk.BooleanVar(value=False)
 
         # Drag-to-pan state
         self._drag_start_x: Optional[float] = None
@@ -476,6 +488,56 @@ class InstaPanoramaSplitter(ctk.CTk):
         self.slider_pan_y.set(0.0)
         self.slider_pan_y.pack(fill="x", pady=4)
 
+        # Row 2: Horizon Tilt Straightening & Auto-Leveling
+        tilt_row = ctk.CTkFrame(pan_card, fg_color="transparent")
+        tilt_row.pack(fill="x", padx=12, pady=(4, 6))
+
+        tilt_hdr = ctk.CTkFrame(tilt_row, fg_color="transparent")
+        tilt_hdr.pack(fill="x", pady=(0, 2))
+
+        self.lbl_tilt = ctk.CTkLabel(
+            tilt_hdr,
+            text="📐 Horizon Tilt & Straighten: 0.0°",
+            font=ctk.CTkFont(size=11),
+            text_color=("gray30", "gray70"),
+        )
+        self.lbl_tilt.pack(side="left")
+
+        self.btn_auto_level = ctk.CTkButton(
+            tilt_hdr,
+            text="🧭 Auto-Level Horizon",
+            font=ctk.CTkFont(size=10, weight="bold"),
+            height=22,
+            width=140,
+            fg_color=("#2563eb", "#1d4ed8"),
+            hover_color=("#1d4ed8", "#2563eb"),
+            command=self._auto_level_horizon,
+        )
+        self.btn_auto_level.pack(side="right")
+
+        btn_reset_tilt = ctk.CTkButton(
+            tilt_hdr,
+            text="Reset 0°",
+            font=ctk.CTkFont(size=10),
+            height=20,
+            width=65,
+            fg_color=("gray75", "gray28"),
+            hover_color=("gray65", "gray38"),
+            command=self._reset_tilt,
+        )
+        btn_reset_tilt.pack(side="right", padx=(0, 6))
+
+        self.slider_tilt = ctk.CTkSlider(
+            tilt_row,
+            from_=-10.0,
+            to=10.0,
+            variable=self.tilt_angle_var,
+            command=self._on_tilt_change,
+            height=16,
+        )
+        self.slider_tilt.set(0.0)
+        self.slider_tilt.pack(fill="x", pady=2)
+
     def _build_configuration_card(self, parent: ctk.CTkBaseClass) -> None:
         """Card for Slices, Ratios, Framing Modes, Creative Overlays, and Instagram Quality."""
         card = ctk.CTkFrame(parent, corner_radius=12, border_width=1, border_color=("gray80", "gray25"))
@@ -574,6 +636,26 @@ class InstaPanoramaSplitter(ctk.CTk):
             anchor="w",
         )
         self.lbl_aspect_desc.pack(fill="x")
+
+        # ---------------- Row 1.5: Split Orientation ----------------
+        ori_row = ctk.CTkFrame(card, fg_color="transparent")
+        ori_row.pack(fill="x", padx=16, pady=(0, 4))
+        ctk.CTkLabel(
+            ori_row,
+            text="Split Orientation:",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=("gray30", "gray70"),
+        ).pack(side="left", padx=(0, 8))
+        self.seg_orientation = ctk.CTkSegmentedButton(
+            ori_row,
+            values=["Horizontal Split", "Vertical Waterfall (Top ➔ Bottom)"],
+            variable=self.split_orientation_var,
+            command=lambda v: self._update_preview(),
+            height=26,
+            font=ctk.CTkFont(size=11, weight="bold"),
+        )
+        self.seg_orientation.set("Horizontal Split")
+        self.seg_orientation.pack(side="left")
 
         # ---------------- Row 2: Framing Mode & Creative Overlay ----------------
         divider = ctk.CTkFrame(card, height=1, fg_color=("gray85", "gray25"))
@@ -731,6 +813,36 @@ class InstaPanoramaSplitter(ctk.CTk):
             height=20,
         ).pack(side="left")
 
+        opt_box_inner3 = ctk.CTkFrame(opt_box, fg_color="transparent")
+        opt_box_inner3.pack(fill="x", padx=12, pady=(0, 8))
+
+        ctk.CTkCheckBox(
+            opt_box_inner3,
+            text="Smart Seams (AI valley detection to avoid cutting subjects)",
+            variable=self.smart_seams_var,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            height=20,
+            command=self._update_preview,
+        ).pack(side="left", padx=(0, 14))
+
+        ctk.CTkCheckBox(
+            opt_box_inner3,
+            text="360° Infinite Seamless Loop",
+            variable=self.infinite_loop_var,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            height=20,
+            command=self._update_preview,
+        ).pack(side="left", padx=(0, 14))
+
+        ctk.CTkCheckBox(
+            opt_box_inner3,
+            text="Before & After Transition (Slide 1 Raw ➔ Graded)",
+            variable=self.before_after_var,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            height=20,
+            command=self._update_preview,
+        ).pack(side="left")
+
         # Format & Prefix
         fmt_row = ctk.CTkFrame(card, fg_color="transparent")
         fmt_row.pack(fill="x", padx=16, pady=(0, 12))
@@ -779,18 +891,35 @@ class InstaPanoramaSplitter(ctk.CTk):
         inner = ctk.CTkFrame(card, fg_color="transparent")
         inner.pack(fill="x", padx=16, pady=16)
 
-        # Primary Slice Button
+        # Primary Action Buttons Row
+        actions_grid = ctk.CTkFrame(inner, fg_color="transparent")
+        actions_grid.pack(fill="x", pady=(0, 12))
+        actions_grid.columnconfigure(0, weight=3)
+        actions_grid.columnconfigure(1, weight=2)
+
         self.btn_slice = ctk.CTkButton(
-            inner,
-            text="✂️ Slice & Save Carousel Slices",
+            actions_grid,
+            text="✂️ Slice & Save Carousel",
             command=self._start_slice_process,
-            height=46,
-            font=ctk.CTkFont(size=15, weight="bold"),
+            height=44,
+            font=ctk.CTkFont(size=14, weight="bold"),
             corner_radius=8,
             fg_color=("#2563eb", "#3b82f6"),
             hover_color=("#1d4ed8", "#2563eb"),
         )
-        self.btn_slice.pack(fill="x", pady=(0, 12))
+        self.btn_slice.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+
+        self.btn_omni = ctk.CTkButton(
+            actions_grid,
+            text="📦 Omni-Channel Pack (.zip)",
+            command=self._start_omni_export,
+            height=44,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            corner_radius=8,
+            fg_color=("#059669", "#10b981"),
+            hover_color=("#047857", "#059669"),
+        )
+        self.btn_omni.grid(row=0, column=1, sticky="ew")
 
         # Progress bar
         self.progress_bar = ctk.CTkProgressBar(inner, height=10, corner_radius=5)
@@ -885,6 +1014,47 @@ class InstaPanoramaSplitter(ctk.CTk):
         self.lbl_pan_y.configure(text="Vertical Pan (Y): Center (0%)")
         self._update_preview()
 
+    def _on_tilt_change(self, value: float) -> None:
+        deg = round(float(value), 1)
+        self.lbl_tilt.configure(text=f"📐 Horizon Tilt & Straighten: {deg:+.1f}°")
+        self._update_preview()
+
+    def _reset_tilt(self) -> None:
+        self.tilt_angle_var.set(0.0)
+        self.slider_tilt.set(0.0)
+        self.lbl_tilt.configure(text="📐 Horizon Tilt & Straighten: 0.0°")
+        self._update_preview()
+
+    def _auto_level_horizon(self) -> None:
+        if self.pil_source_image is None:
+            messagebox.showinfo("No Image", "Please load a panorama image first.")
+            return
+
+        self.btn_auto_level.configure(text="⏳ Leveling...", state="disabled")
+        self.update_idletasks()
+
+        def worker():
+            try:
+                angle = detect_horizon_tilt(self.pil_source_image)
+                def apply_angle():
+                    self.tilt_angle_var.set(angle)
+                    self.slider_tilt.set(angle)
+                    self.lbl_tilt.configure(text=f"📐 Horizon Tilt & Straighten: {angle:+.1f}°")
+                    self.btn_auto_level.configure(text="🧭 Auto-Level Horizon", state="normal")
+                    self.lbl_status.configure(
+                        text=f"Auto-horizon detected tilt: {angle:+.1f}°. Rotated & cropped automatically.",
+                        text_color=("#16a34a", "#22c55e"),
+                    )
+                    self._update_preview()
+                self.after(0, apply_angle)
+            except Exception as e:
+                def err():
+                    self.btn_auto_level.configure(text="🧭 Auto-Level Horizon", state="normal")
+                    messagebox.showerror("Horizon Error", f"Failed to detect horizon:\n{e}")
+                self.after(0, err)
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _on_preview_drag_start(self, event) -> None:
         """Record start position for pointer drag-to-pan."""
         if self.pil_source_image is None:
@@ -947,9 +1117,10 @@ class InstaPanoramaSplitter(ctk.CTk):
     # -----------------------------------------------------------------------
     def _browse_image(self) -> None:
         filetypes = [
-            ("All Supported Images", "*.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff"),
-            ("JPEG Images", "*.jpg *.jpeg"),
-            ("PNG Images", "*.png"),
+            ("All Supported Images", "*.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff *.heic *.heif *.dng *.raw *.cr2 *.nef *.arw"),
+            ("JPEG & PNG Images", "*.jpg *.jpeg *.png"),
+            ("Apple HEIC / HEIF", "*.heic *.heif"),
+            ("Apple ProRAW & DNG / RAW", "*.dng *.raw *.cr2 *.nef *.arw"),
             ("All Files", "*.*"),
         ]
         chosen = filedialog.askopenfilename(title="Select Wide Panorama Image", filetypes=filetypes)
@@ -958,8 +1129,7 @@ class InstaPanoramaSplitter(ctk.CTk):
 
     def _load_image(self, path: str) -> None:
         try:
-            raw = Image.open(path)
-            img = ImageOps.exif_transpose(raw)
+            img = ImageEngine.load_image(path)
             w, h = img.size
             if w <= 0 or h <= 0:
                 raise ValueError("Invalid image dimensions.")
@@ -1002,6 +1172,9 @@ class InstaPanoramaSplitter(ctk.CTk):
 
         try:
             orig = self.pil_source_image
+            tilt = float(self.tilt_angle_var.get())
+            if abs(tilt) > 1e-3:
+                orig = rotate_and_crop(orig, tilt)
             orig_w, orig_h = orig.size
             n_slices = self.num_slices_var.get()
             aspect_val = self.aspect_mode_var.get()
@@ -1199,6 +1372,11 @@ class InstaPanoramaSplitter(ctk.CTk):
             story_mode=self.story_mode_var.get(),
             format=self.format_var.get(),
             prefix=self.prefix_var.get().strip() or "panorama_slice",
+            tilt_angle=float(self.tilt_angle_var.get()),
+            smart_seams=bool(self.smart_seams_var.get()),
+            infinite_loop=bool(self.infinite_loop_var.get()),
+            split_orientation="vertical" if "Vertical" in self.split_orientation_var.get() else "horizontal",
+            before_after_mode=bool(self.before_after_var.get()),
         )
 
     def _start_slice_process(self) -> None:
@@ -1262,6 +1440,62 @@ class InstaPanoramaSplitter(ctk.CTk):
         except Exception as e:
             traceback.print_exc()
             self.after(0, self._on_slice_error, str(e))
+
+    def _start_omni_export(self) -> None:
+        """Trigger one-click Omni-Channel Social Pack export."""
+        if self.is_processing:
+            return
+
+        if self.pil_source_image is None or not self.image_path:
+            messagebox.showwarning("No Image", "Please select a panorama image before exporting.")
+            return
+
+        stem, _ = os.path.splitext(os.path.basename(self.image_path))
+        dest_dir = filedialog.askdirectory(
+            title="Select Destination Folder for Omni-Channel Social Pack",
+            initialdir=os.path.dirname(self.image_path),
+        )
+        if not dest_dir:
+            return
+
+        target_pack_dir = os.path.join(dest_dir, f"{stem}_OmniSocialPack")
+        config = self._build_slicing_config()
+        self.is_processing = True
+        self.btn_omni.configure(state="disabled", text="⏳ Exporting Pack...")
+        self.btn_slice.configure(state="disabled")
+        self.btn_browse.configure(state="disabled")
+        self.btn_open_folder.configure(state="disabled")
+        self.btn_post_qr.configure(state="disabled")
+        self.progress_bar.set(0.1)
+        self.lbl_status.configure(text="Generating multi-platform assets...", text_color=("gray20", "gray85"))
+
+        threading.Thread(
+            target=self._omni_worker,
+            args=(self.pil_source_image.copy(), config, target_pack_dir),
+            daemon=True,
+        ).start()
+
+    def _omni_worker(self, img: Image.Image, config: SlicingConfig, target_pack_dir: str) -> None:
+        try:
+            self._update_progress_from_thread(0.3, "Rendering feed, stories, twitter header, and lookbook PDF...")
+            res = export_omni_pack(
+                image=img,
+                config=config,
+                output_dir=target_pack_dir,
+                include_video=True,
+            )
+            feed_paths = res.get("feed_slices", [])
+            self.cached_slices = ImageEngine.slice_panorama(img, config)
+            all_files = list(feed_paths) + list(res.get("story_slices", []))
+            pdf_path = res.get("linkedin_pdf")
+            if pdf_path:
+                all_files.append(pdf_path)
+            self.after(0, self._on_slice_success, target_pack_dir, len(feed_paths), all_files)
+        except Exception as e:
+            traceback.print_exc()
+            self.after(0, self._on_slice_error, str(e))
+        finally:
+            self.after(0, lambda: self.btn_omni.configure(state="normal", text="📦 Omni-Channel Pack (.zip)"))
 
     def _update_progress_from_thread(self, p: float, msg: str) -> None:
         self.after(0, lambda: self._apply_progress(p, msg))
@@ -1361,7 +1595,12 @@ class InstaPanoramaSplitter(ctk.CTk):
 
     def _open_caption_modal(self) -> None:
         """Launch Instagram Captions & Hashtags Scratchpad."""
-        CaptionHashtagsModal(parent=self, num_slices=self.num_slices_var.get())
+        CaptionHashtagsModal(
+            parent=self,
+            num_slices=self.num_slices_var.get(),
+            image=self.pil_source_image,
+            image_path=self.image_path,
+        )
 
     def _open_batch_modal(self) -> None:
         """Launch Batch Processing Modal."""

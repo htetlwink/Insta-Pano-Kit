@@ -49,11 +49,41 @@ A modern desktop application built with **CustomTkinter**, **Pillow (PIL)**, and
 - Slice photos into **3×1 Banners** (profile header), **3×2**, or **3×3 Giant Grids** (9 tiles forming one massive image on your profile).
 - Automatically exports tiles with **reverse upload numbering** (`grid_09_upload_1st.jpg` down to `grid_01_upload_last.jpg`) so your grid appears in alignment.
 
-### 8. 🏷️ Captions & Hashtags Scratchpad
+### 8. 📐 Auto-Horizon Leveling & Tilt Correction
+- **Automatic Horizon Detection**: Computes gradient projection profile variance across angles to detect and auto-level tilted horizons ($\pm 10^\circ$).
+- **Maximum Inscribed Corner Crop**: Eliminates black boundary triangles during tilt straightening using geometric trigonometry.
+- **Manual Straightening Slider**: Real-time slider from $-10.0^\circ$ to $+10.0^\circ$ with live preview updates.
+
+### 9. 🧠 Smart AI Seams & Creative Carousel Formats
+- **Smart Seam Placement**: Computes vertical gradient energy around default seams to find valley minima, avoiding slicing directly through faces, people, and architectural focal points.
+- **Vertical Waterfall Split**: Slices ultra-tall panoramas and vertical architectural compositions top-to-bottom into stacked 4:5 or 9:16 slides.
+- **360° Infinite Seamless Loop**: Crossfades and blends the left and right boundaries for 360-degree panoramas so slide $N$ flows cyclically back into slide 1.
+- **Before & After Seam Transition**: Renders an aesthetic `"BEFORE ➔"` prompt badge on Slide 1 (raw) and `"✨ AFTER"` on Slide 2+ (graded) for high-engagement transformation posts.
+
+### 10. 🎵 Ambient Audio-Backed Reels & Cinematic Speed Ramping
+- **Synthesized Ambient Soundscapes**: Generates soothing, royalty-free C Major 9 harmonic drone chords with stereo LFO breathing using zero external audio libraries.
+- **Cinematic Speed Ramping**: Supports *Ease In & Out*, *Linear*, and *Slow-mo Climax* (lingering on the panoramic apex before accelerating).
+- **Audio Muxing**: Automatically muxes stereo 192k AAC audio into H.264 video exports.
+
+### 11. 📦 1-Click Omni-Channel Social Export Pack
+- With one click, exports a structured distribution archive containing:
+  - `instagram_feed/`: 4:5 or 1:1 slices + `upload_guide.jpg`
+  - `instagram_stories/`: 9:16 vertical tap-through sequence with progress bars
+  - `twitter_threads_header/`: 3:1 landscape header banner ($1500 \times 500\text{ px}$)
+  - `linkedin_lookbook.pdf`: Multi-page swipeable PDF lookbook (Pillow `save_all=True`)
+  - `captions.txt`: Formatted aesthetic, technical, and engagement copy
+  - `reels_video.mp4`: Animated Ken Burns panning video with ambient audio
+
+### 12. 📱 Apple iPhone HEIC & Apple ProRAW / DNG Ingestion
+- **Browser-Side**: Converts `.heic`/`.heif` directly on client devices using `heic2any` (zero server upload needed).
+- **Backend / Desktop**: Decodes `.heic`/`.heif` via `pillow_heif` and extracts embedded full-resolution JPEGs from DNG/RAW camera files without heavy C dependencies.
+
+### 13. 🏷️ AI Storytelling Captions & Hashtags Scratchpad
 - Curated high-reach hashtags for *Panoramas & Carousels*, *Landscapes & Nature*, *Cityscapes & Architecture*, and *Mobile Photography*.
 - Ready-to-use swipe-prompt caption templates with one-click clipboard copying.
+- Dynamic EXIF camera breakdowns (*Shot on ... | ...mm | f/... | 1/...s | ISO ...*).
 
-### 9. 📦 Batch Panorama Slicer
+### 14. 📦 Batch Panorama Slicer
 - Queue multiple panorama photos or an entire folder to slice and organize each image into its own carousel subfolder.
 
 ---
@@ -90,22 +120,28 @@ python3 -m unittest discover tests
 
 ```
 pano maker/
-├── app.py                          # Main GUI application & unified interface
+├── app.py                          # Main GUI application & unified desktop interface
+├── web_app.py                      # Flask backend for Render & web deployment
+├── index.html                      # Standalone client-side single-page app (Private, 0-server-RAM)
 ├── README.md                       # Documentation & feature manual
+├── SETUP.md                        # Deployment & setup guide
 ├── core/
-│   ├── image_engine.py             # Slicing, sRGB, unsharp mask, borders, seam cues, grids
-│   ├── video_engine.py             # FFmpeg Ken Burns panning video generator (Reels/Stories)
+│   ├── image_engine.py             # Slicing, tilt straighten, smart seams, sRGB, unsharp mask, RAW/DNG
+│   ├── caption_engine.py           # Smart AI storytelling captions, EXIF specs, & curated hashtags
+│   ├── video_engine.py             # FFmpeg video generator with ambient audio & speed ramping
+│   ├── export_engine.py            # Omni-channel multi-platform ZIP & lookbook PDF pack exporter
 │   ├── web_share.py                # Local HTTP server + QR code generator + mobile web UI
 │   └── batch_engine.py             # Bulk queue batch processing
 ├── gui/
 │   ├── phone_simulator.py          # Interactive Instagram Phone Carousel swipe simulator
 │   ├── qr_modal.py                 # QR transfer dialog with live local Wi-Fi server
-│   ├── video_modal.py              # Reel / Story panning video configuration dialog
+│   ├── video_modal.py              # Reel / Story panning video with audio & speed ramping
 │   ├── grid_modal.py               # 3x1 / 3x2 / 3x3 Profile Grid post dialog
-│   ├── caption_modal.py            # Caption & hashtag presets drawer
+│   ├── caption_modal.py            # Smart storytelling captions & hashtags drawer
 │   └── batch_modal.py              # Batch panorama slicer queue modal
 └── tests/
-    ├── test_image_engine.py        # 22 automated tests for image slicing & features
-    ├── test_video_engine.py        # 6 automated tests for video pan generator
-    └── test_web_share.py           # 5 automated tests for mobile QR server & download
+    ├── test_image_engine.py        # Automated tests for image slicing, tilt, smart seams & RAW
+    ├── test_video_engine.py        # Automated tests for video pan generator & ambient audio
+    ├── test_export_engine.py       # Automated tests for omni-channel pack, lookbook PDF & captions
+    └── test_web_share.py           # Automated tests for mobile QR server & download
 ```

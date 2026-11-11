@@ -1,7 +1,14 @@
 """
-Core processing modules for InstaPanoramaSplitter.
+Core processing modules for Insta-Pano-Kit.
 """
 
+from core.caption_engine import (
+    format_full_caption,
+    generate_smart_captions,
+)
+from core.export_engine import (
+    export_omni_pack,
+)
 from core.image_engine import (
     ASPECT_RATIOS,
     GridConfig,
@@ -9,20 +16,25 @@ from core.image_engine import (
     ImageEngine,
     SlicingConfig,
     apply_color_filter,
+    compute_smart_seams,
+    detect_horizon_tilt,
     extract_exif_metadata,
     generate_camera_card,
     generate_upload_guide,
     parse_color,
+    rotate_and_crop,
     save_slices,
     slice_grid,
     slice_panorama,
 )
 from core.video_engine import (
+    VideoConfig,
     VideoPanConfig,
+    generate_ambient_audio,
     generate_panning_video,
-    is_ffmpeg_available,
     get_ffmpeg_path,
     get_target_resolution,
+    is_ffmpeg_available,
 )
 from core.web_share import (
     PhoneTransferServer,
@@ -35,17 +47,25 @@ __all__ = [
     "ImageEngine",
     "SlicingConfig",
     "apply_color_filter",
+    "compute_smart_seams",
+    "detect_horizon_tilt",
     "extract_exif_metadata",
+    "format_full_caption",
+    "generate_ambient_audio",
     "generate_camera_card",
+    "generate_panning_video",
+    "generate_smart_captions",
     "generate_upload_guide",
+    "get_ffmpeg_path",
+    "get_target_resolution",
+    "is_ffmpeg_available",
     "parse_color",
+    "rotate_and_crop",
     "save_slices",
     "slice_grid",
     "slice_panorama",
+    "export_omni_pack",
+    "VideoConfig",
     "VideoPanConfig",
-    "generate_panning_video",
-    "is_ffmpeg_available",
-    "get_ffmpeg_path",
-    "get_target_resolution",
     "PhoneTransferServer",
 ]

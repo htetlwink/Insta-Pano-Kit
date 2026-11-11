@@ -2,8 +2,11 @@
 Caption and Hashtag Generator Modal for Instagram Carousels & Panoramas.
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional, Union
+from PIL import Image
 import customtkinter as ctk
+
+from core.caption_engine import generate_smart_captions, format_full_caption
 
 
 HASHTAG_CATEGORIES: Dict[str, List[str]] = {
@@ -59,13 +62,30 @@ DEFAULT_CAPTION_TEMPLATES = [
 class CaptionHashtagsModal(ctk.CTkToplevel):
     """Dialog for crafting Instagram captions and copying popular photography hashtags."""
 
-    def __init__(self, parent: ctk.CTk, num_slices: int = 3) -> None:
+    def __init__(
+        self,
+        parent: ctk.CTk,
+        num_slices: int = 3,
+        image: Optional[Image.Image] = None,
+        image_path: Optional[str] = None,
+    ) -> None:
         super().__init__(parent)
         self.num_slices = num_slices
+        self.image = image
+        self.image_path = image_path
+        self.smart_captions: Dict[str, str] = {}
+        try:
+            self.smart_captions = generate_smart_captions(
+                image_path=self.image_path,
+                pil_image=self.image,
+                num_slices=self.num_slices,
+            )
+        except Exception:
+            pass
 
         self.title("Instagram Caption & Hashtags Assistant")
-        self.geometry("700x720")
-        self.minsize(620, 600)
+        self.geometry("700x750")
+        self.minsize(620, 620)
         self.transient(parent)
         self.grab_set()
 
@@ -108,12 +128,66 @@ class CaptionHashtagsModal(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             template_card,
-            text="1. Choose Caption Template",
+            text="1. Smart Storytelling Captions & Templates",
             font=ctk.CTkFont(size=14, weight="bold"),
         ).pack(anchor="w", padx=16, pady=(12, 6))
 
+        # Smart AI Captions Bar
+        if self.smart_captions:
+            smart_row = ctk.CTkFrame(template_card, fg_color="transparent")
+            smart_row.pack(fill="x", padx=16, pady=(0, 8))
+            ctk.CTkLabel(
+                smart_row,
+                text="✨ AI Storytelling:",
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=("#2563eb", "#60a5fa"),
+            ).pack(side="left", padx=(0, 8))
+
+            b_aes = ctk.CTkButton(
+                smart_row,
+                text="Aesthetic Story",
+                font=ctk.CTkFont(size=11, weight="bold"),
+                height=26,
+                fg_color=("#3b82f6", "#2563eb"),
+                command=lambda: self._apply_template(self.smart_captions.get("aesthetic", "")),
+            )
+            b_aes.pack(side="left", padx=(0, 6))
+
+            b_tech = ctk.CTkButton(
+                smart_row,
+                text="EXIF Camera Specs",
+                font=ctk.CTkFont(size=11),
+                height=26,
+                command=lambda: self._apply_template(self.smart_captions.get("technical", "")),
+            )
+            b_tech.pack(side="left", padx=(0, 6))
+
+            b_eng = ctk.CTkButton(
+                smart_row,
+                text="Engagement Hook",
+                font=ctk.CTkFont(size=11),
+                height=26,
+                command=lambda: self._apply_template(self.smart_captions.get("engagement", "")),
+            )
+            b_eng.pack(side="left", padx=(0, 6))
+
+            b_all = ctk.CTkButton(
+                smart_row,
+                text="Full Post",
+                font=ctk.CTkFont(size=11),
+                height=26,
+                command=lambda: self._apply_template(format_full_caption(self.smart_captions)),
+            )
+            b_all.pack(side="left")
+
         btn_row = ctk.CTkFrame(template_card, fg_color="transparent")
-        btn_row.pack(fill="x", padx=16, pady=(0, 12))
+        btn_row.pack(fill="x", padx=16, pady=(0, 10))
+        ctk.CTkLabel(
+            btn_row,
+            text="Presets:",
+            font=ctk.CTkFont(size=11),
+            text_color=("gray45", "gray55"),
+        ).pack(side="left", padx=(0, 8))
 
         for name, text in DEFAULT_CAPTION_TEMPLATES:
             b = ctk.CTkButton(
