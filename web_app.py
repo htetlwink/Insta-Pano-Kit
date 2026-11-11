@@ -451,6 +451,9 @@ HTML_TEMPLATE = """
 
 @app.route("/")
 def index():
+    # Serve client-side HTML app (0 MB server RAM, instantaneous slicing & ZIP in browser)
+    if os.path.exists("index.html"):
+        return send_file("index.html")
     return render_template_string(HTML_TEMPLATE)
 
 

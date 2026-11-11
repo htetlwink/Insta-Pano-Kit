@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📸 InstaPanoramaSplitter — Pure Web & Mobile Slicer</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- JSZip for client-side zero-server ZIP creation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        body { background-color: #0b0f19; color: #f3f4f6; }
+        .card { background-color: #131927; border: 1px solid #1f293d; }
+    </style>
+</head>
+<body class="min-h-screen py-8 px-4 font-sans selection:bg-blue-600 selection:text-white">
+    <div class="max-w-4xl mx-auto space-y-6">
+        
+        <!-- Header -->
+        <header class="text-center space-y-2">
+            <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-white flex items-center justify-center gap-3">
+                📸 InstaPanoramaSplitter
+            </h1>
+            <p class="text-sm sm:text-base text-gray-400">
+                100% In-Browser Instagram Panorama Carousel Slicer. No server uploads, no limits, instant & private.
+            </p>
+        </header>
+
+        <!-- Main Form Card -->
+        <div class="card rounded-2xl p-6 sm:p-8 shadow-xl space-y-6">
+            
+            <!-- 1. Upload Box -->
+            <div>
+                <label class="block text-sm font-semibold text-gray-300 mb-2">1. Select Panorama Photo</label>
+                <div id="dropZone" class="border-2 border-dashed border-gray-700 hover:border-blue-500 rounded-xl p-6 text-center cursor-pointer transition bg-gray-900/50" onclick="document.getElementById('fileInput').click()">
+                    <input type="file" id="fileInput" accept="image/*" class="hidden" onchange="handleFileSelect(event)">
+                    <div id="uploadPrompt" class="space-y-1">
+                        <span class="text-4xl">🌄</span>
+                        <p class="text-sm font-medium text-gray-300">Click or Drag & Drop Panorama Here</p>
+                        <p class="text-xs text-gray-500">Works directly in your browser. Photos are processed locally and never uploaded to any server.</p>
+                    </div>
+                    <div id="fileInfo" class="hidden text-sm font-semibold text-blue-400"></div>
+                </div>
+            </div>
+
+            <!-- 2. Live Interactive Canvas Preview Card -->
+            <div id="previewCard" class="hidden space-y-4">
+                <div class="flex items-center justify-between">
+                    <span class="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+                        <span>🎯</span> Live Slicing & Pan Framing Preview
+                    </span>
+                    <span id="ratioBadge" class="text-xs font-mono text-blue-400 bg-blue-950/60 px-2.5 py-1 rounded-md border border-blue-800/40"></span>
+                </div>
+
+                <!-- Canvas Display Container -->
+                <div class="relative bg-black rounded-xl overflow-hidden border border-gray-800 flex items-center justify-center p-2 min-h-[160px]">
+                    <canvas id="previewCanvas" class="max-w-full max-h-[320px] rounded shadow-lg"></canvas>
+                </div>
+
+                <!-- Interactive Pan Sliders (X & Y) -->
+                <div id="panControls" class="bg-gray-900/70 p-4 rounded-xl border border-gray-800 space-y-3">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-bold text-gray-300">Crop Position Framing</span>
+                        <button type="button" onclick="resetPan()" class="text-xs text-blue-400 hover:text-blue-300 font-semibold bg-gray-800 px-2.5 py-1 rounded">
+                            Reset Center (0, 0)
+                        </button>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <div class="flex justify-between text-xs text-gray-400 mb-1">
+                                <span>Horizontal Pan (X)</span>
+                                <span id="panXVal" class="font-mono">0%</span>
+                            </div>
+                            <input type="range" id="panX" min="-1" max="1" step="0.02" value="0" oninput="updatePanPreview()" class="w-full accent-blue-500 cursor-pointer">
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-xs text-gray-400 mb-1">
+                                <span>Vertical Pan (Y)</span>
+                                <span id="panYVal" class="font-mono">0%</span>
+                            </div>
+                            <input type="range" id="panY" min="-1" max="1" step="0.02" value="0" oninput="updatePanPreview()" class="w-full accent-blue-500 cursor-pointer">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. Slicing Settings -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <!-- Slices Count -->
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Number of Slices</label>
+                    <select id="sliceCount" onchange="updatePanPreview()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+                        <option value="2">2 Slices</option>
+                        <option value="3" selected>3 Slices (Most Popular)</option>
+                        <option value="4">4 Slices</option>
+                        <option value="5">5 Slices</option>
+                        <option value="6">6 Slices</option>
+                        <option value="7">7 Slices</option>
+                    </select>
+                </div>
+
+                <!-- Aspect Ratio -->
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Instagram Aspect Ratio</label>
+                    <select id="aspectRatio" onchange="updatePanPreview()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+                        <option value="Portrait (4:5)" selected>Portrait 4:5 (1080×1350 px — Feed Optimal)</option>
+                        <option value="Square (1:1)">Square 1:1 (1080×1080 px — Classic)</option>
+                        <option value="Story (9:16)">Story 9:16 (1080×1920 px — Reels / Stories)</option>
+                    </select>
+                </div>
+
+                <!-- Framing Mode -->
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Framing & Fill Strategy</label>
+                    <select id="fitMode" onchange="updatePanPreview()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+                        <option value="Standard (Fit & Crop)" selected>Standard 1080px (Fit & Center Crop)</option>
+                        <option value="Proportional (Full Width)">Proportional Full Width (No Crop)</option>
+                        <option value="Blurred Background Fill">Blurred Background Fill (No Cropping)</option>
+                        <option value="Solid Gallery Border">Gallery Border (White Frame)</option>
+                    </select>
+                </div>
+
+                <!-- Creative Overlay -->
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Seamless Engagement Cue</label>
+                    <select id="indicator" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+                        <option value="None" selected>None</option>
+                        <option value="Seam Arrow">Seam Arrow ➔ (Spans Slices)</option>
+                        <option value="Swipe Badge">"Swipe Left 👉" Badge (Slide 1)</option>
+                        <option value="Dot Indicators">Pagination Dots</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Text Overlays -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Slide 1 Title (Optional)</label>
+                    <input type="text" id="titleText" placeholder="e.g. Alpine Sunset" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Photographer Credit / Handle</label>
+                    <input type="text" id="watermarkText" placeholder="e.g. @your_account" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500">
+                </div>
+            </div>
+
+            <!-- Toggles -->
+            <div class="flex flex-wrap gap-4 text-xs font-medium text-gray-300">
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="guideToggle" checked class="rounded bg-gray-800 border-gray-700 text-blue-500">
+                    Include Numbered Upload Guide Contact Sheet
+                </label>
+            </div>
+
+            <!-- Primary Action Button -->
+            <button type="button" onclick="startClientSlicing()" id="sliceBtn" class="w-full py-4 px-6 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl shadow-lg transition duration-150 flex items-center justify-center gap-2 text-base">
+                <span>✂️ Slice Panorama & Download ZIP (Instant)</span>
+            </button>
+        </div>
+
+        <!-- Result / Gallery Section -->
+        <div id="resultsCard" class="hidden card rounded-2xl p-6 sm:p-8 space-y-6">
+            <div class="flex items-center justify-between">
+                <h2 class="text-xl font-bold text-white flex items-center gap-2">
+                    <span>✅</span> Generated Carousel Slides
+                </h2>
+                <button type="button" onclick="downloadAllZip()" id="zipDownloadBtn" class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm rounded-xl shadow transition flex items-center gap-2">
+                    <span>⬇️</span> Download All as ZIP
+                </button>
+            </div>
+
+            <!-- Carousel Gallery Container -->
+            <div id="galleryGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4"></div>
+        </div>
+    </div>
+
+    <script>
+        let loadedImage = null;
+        let generatedBlobs = []; // [{filename, blob, url, index}]
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            document.getElementById('uploadPrompt').classList.add('hidden');
+            const info = document.getElementById('fileInfo');
+            info.textContent = `📄 ${file.name} (${(file.size / (1024*1024)).toFixed(2)} MB)`;
+            info.classList.remove('hidden');
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                loadedImage = new Image();
+                loadedImage.onload = function() {
+                    document.getElementById('previewCard').classList.remove('hidden');
+                    updatePanPreview();
+                };
+                loadedImage.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // Drag and drop setup
+        const dropZone = document.getElementById('dropZone');
+        ['dragenter', 'dragover'].forEach(name => {
+            dropZone.addEventListener(name, (e) => { e.preventDefault(); dropZone.classList.add('border-blue-500'); });
+        });
+        ['dragleave', 'drop'].forEach(name => {
+            dropZone.addEventListener(name, (e) => { e.preventDefault(); dropZone.classList.remove('border-blue-500'); });
+        });
+        dropZone.addEventListener('drop', (e) => {
+            if (e.dataTransfer.files.length) {
+                document.getElementById('fileInput').files = e.dataTransfer.files;
+                handleFileSelect({ target: { files: e.dataTransfer.files } });
+            }
+        });
+
+        function resetPan() {
+            document.getElementById('panX').value = 0;
+            document.getElementById('panY').value = 0;
+            updatePanPreview();
+        }
+
+        function getTargetDimensions() {
+            const aspectVal = document.getElementById('aspectRatio').value;
+            if (aspectVal.includes('1:1')) return { targetW: 1080, targetH: 1080 };
+            if (aspectVal.includes('9:16')) return { targetW: 1080, targetH: 1920 };
+            return { targetW: 1080, targetH: 1350 }; // 4:5 default
+        }
+
+        function updatePanPreview() {
+            if (!loadedImage) return;
+
+            const canvas = document.getElementById('previewCanvas');
+            const ctx = canvas.getContext('2d');
+
+            const nSlices = parseInt(document.getElementById('sliceCount').value) || 3;
+            const fitMode = document.getElementById('fitMode').value;
+            const panX = parseFloat(document.getElementById('panX').value) || 0;
+            const panY = parseFloat(document.getElementById('panY').value) || 0;
+
+            document.getElementById('panXVal').textContent = `${Math.round(panX * 100)}%`;
+            document.getElementById('panYVal').textContent = `${Math.round(panY * 100)}%`;
+
+            const { targetW, targetH } = getTargetDimensions();
+            const totalTargetW = targetW * nSlices;
+            const targetRatio = totalTargetW / targetH;
+            const origW = loadedImage.naturalWidth;
+            const origH = loadedImage.naturalHeight;
+            const origRatio = origW / origH;
+
+            document.getElementById('ratioBadge').textContent = 
+                `${origW}×${origH} px (${origRatio.toFixed(2)}:1) ➔ ${nSlices} Slices @ ${targetW}×${targetH}`;
+
+            const maxDisplayW = Math.min(760, window.innerWidth - 60);
+            const scale = maxDisplayW / origW;
+            const cw = Math.max(20, Math.round(origW * scale));
+            const ch = Math.max(20, Math.round(origH * scale));
+
+            canvas.width = cw;
+            canvas.height = ch;
+
+            ctx.drawImage(loadedImage, 0, 0, cw, ch);
+
+            let activeX0 = 0, activeX1 = cw, activeY0 = 0, activeY1 = ch;
+
+            if (fitMode.includes('Standard')) {
+                document.getElementById('panControls').classList.remove('opacity-50', 'pointer-events-none');
+                if (origRatio >= targetRatio) {
+                    const activeW = ch * targetRatio;
+                    const excessW = cw - activeW;
+                    const offsetX = excessW * (panX + 1) / 2;
+                    activeX0 = Math.max(0, Math.min(excessW, offsetX));
+                    activeX1 = activeX0 + activeW;
+
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+                    ctx.fillRect(0, 0, activeX0, ch);
+                    ctx.fillRect(activeX1, 0, cw - activeX1, ch);
+                } else {
+                    const activeH = cw / targetRatio;
+                    const excessH = ch - activeH;
+                    const offsetY = excessH * (panY + 1) / 2;
+                    activeY0 = Math.max(0, Math.min(excessH, offsetY));
+                    activeY1 = activeY0 + activeH;
+
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+                    ctx.fillRect(0, 0, cw, activeY0);
+                    ctx.fillRect(0, activeY1, cw, ch - activeY1);
+                }
+            } else {
+                document.getElementById('panControls').classList.add('opacity-50', 'pointer-events-none');
+            }
+
+            const activeSpanW = activeX1 - activeX0;
+            const sliceSpanW = activeSpanW / nSlices;
+
+            for (let i = 0; i < nSlices; i++) {
+                const x0 = activeX0 + i * sliceSpanW;
+                const x1 = activeX0 + (i + 1) * sliceSpanW;
+
+                if (i > 0) {
+                    ctx.strokeStyle = '#00ebff';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(x0, activeY0);
+                    ctx.lineTo(x0, activeY1);
+                    ctx.stroke();
+                }
+
+                const cx = (x0 + x1) / 2;
+                const cy = activeY0 + 16;
+                if (cy + 12 < activeY1) {
+                    ctx.fillStyle = '#2563eb';
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 11, 0, 2 * Math.PI);
+                    ctx.fill();
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 11px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText((i + 1).toString(), cx, cy);
+                }
+            }
+
+            ctx.strokeStyle = '#00ebff';
+            ctx.lineWidth = 2.5;
+            ctx.strokeRect(activeX0, activeY0, activeSpanW, activeY1 - activeY0);
+        }
+
+        // -------------------------------------------------------------
+        // Client-side HTML5 Canvas Slicing Engine (100% in Browser)
+        // -------------------------------------------------------------
+        async function startClientSlicing() {
+            if (!loadedImage) {
+                alert('Please select an image first.');
+                return;
+            }
+
+            const btn = document.getElementById('sliceBtn');
+            btn.disabled = true;
+            btn.innerHTML = `<span class="animate-spin inline-block mr-2">⏳</span> Slicing in Browser (0 MB server data)...`;
+
+            try {
+                const nSlices = parseInt(document.getElementById('sliceCount').value) || 3;
+                const fitMode = document.getElementById('fitMode').value;
+                const indicator = document.getElementById('indicator').value;
+                const panX = parseFloat(document.getElementById('panX').value) || 0;
+                const panY = parseFloat(document.getElementById('panY').value) || 0;
+                const titleText = document.getElementById('titleText').value.trim();
+                const watermarkText = document.getElementById('watermarkText').value.trim();
+                const includeGuide = document.getElementById('guideToggle').checked;
+
+                const { targetW, targetH } = getTargetDimensions();
+                const totalTargetW = targetW * nSlices;
+
+                const origW = loadedImage.naturalWidth;
+                const origH = loadedImage.naturalHeight;
+
+                // 1. Build Full Carousel Canvas
+                const fullCanvas = document.createElement('canvas');
+                fullCanvas.width = totalTargetW;
+                fullCanvas.height = targetH;
+                const fCtx = fullCanvas.getContext('2d');
+
+                if (fitMode.includes('Standard')) {
+                    // Standard Fit & Crop
+                    const scale = Math.max(totalTargetW / origW, targetH / origH);
+                    const cropRegionW = totalTargetW / scale;
+                    const cropRegionH = targetH / scale;
+
+                    const excessW = Math.max(0, origW - cropRegionW);
+                    const excessH = Math.max(0, origH - cropRegionH);
+
+                    const sx = Math.max(0, Math.min(excessW, excessW * (panX + 1) / 2));
+                    const sy = Math.max(0, Math.min(excessH, excessH * (panY + 1) / 2));
+
+                    fCtx.drawImage(loadedImage, sx, sy, cropRegionW, cropRegionH, 0, 0, totalTargetW, targetH);
+                } else if (fitMode.includes('Blurred')) {
+                    // Blurred background fill
+                    // Draw blurred backdrop first
+                    fCtx.filter = 'blur(30px)';
+                    fCtx.drawImage(loadedImage, 0, 0, totalTargetW, targetH);
+                    fCtx.filter = 'none';
+
+                    // Dim overlay
+                    fCtx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+                    fCtx.fillRect(0, 0, totalTargetW, targetH);
+
+                    // Fit foreground without cropping
+                    const scale = Math.min(totalTargetW / origW, targetH / origH);
+                    const fgW = Math.round(origW * scale);
+                    const fgH = Math.round(origH * scale);
+                    const fx = Math.round((totalTargetW - fgW) / 2);
+                    const fy = Math.round((targetH - fgH) / 2);
+                    fCtx.drawImage(loadedImage, fx, fy, fgW, fgH);
+                } else if (fitMode.includes('Solid')) {
+                    // White border frame
+                    fCtx.fillStyle = '#ffffff';
+                    fCtx.fillRect(0, 0, totalTargetW, targetH);
+                    const scale = Math.min((totalTargetW - 40) / origW, (targetH - 40) / origH);
+                    const fgW = Math.round(origW * scale);
+                    const fgH = Math.round(origH * scale);
+                    const fx = Math.round((totalTargetW - fgW) / 2);
+                    const fy = Math.round((targetH - fgH) / 2);
+                    fCtx.drawImage(loadedImage, fx, fy, fgW, fgH);
+                } else {
+                    // Proportional
+                    fCtx.drawImage(loadedImage, 0, 0, totalTargetW, targetH);
+                }
+
+                // Draw seam arrows across cut boundaries before slicing
+                if (indicator === 'Seam Arrow') {
+                    for (let i = 1; i < nSlices; i++) {
+                        const seamX = i * targetW;
+                        const seamY = targetH * 0.5;
+
+                        // Pill badge centered exactly on seamX
+                        fCtx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+                        fCtx.beginPath();
+                        fCtx.roundRect(seamX - 35, seamY - 18, 70, 36, 18);
+                        fCtx.fill();
+                        fCtx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+                        fCtx.lineWidth = 1.5;
+                        fCtx.stroke();
+
+                        fCtx.fillStyle = '#ffffff';
+                        fCtx.font = 'bold 16px sans-serif';
+                        fCtx.textAlign = 'center';
+                        fCtx.textBaseline = 'middle';
+                        fCtx.fillText('➔', seamX, seamY);
+                    }
+                }
+
+                // 2. Slice into individual canvases
+                generatedBlobs = [];
+                for (let i = 0; i < nSlices; i++) {
+                    const sliceCanvas = document.createElement('canvas');
+                    sliceCanvas.width = targetW;
+                    sliceCanvas.height = targetH;
+                    const sCtx = sliceCanvas.getContext('2d');
+
+                    sCtx.drawImage(fullCanvas, i * targetW, 0, targetW, targetH, 0, 0, targetW, targetH);
+
+                    // Slide 1 Title Overlay
+                    if (i === 0 && titleText) {
+                        sCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                        sCtx.fillRect(40, 50, targetW - 80, 70);
+                        sCtx.fillStyle = '#ffffff';
+                        sCtx.font = 'bold 28px sans-serif';
+                        sCtx.textAlign = 'left';
+                        sCtx.textBaseline = 'middle';
+                        sCtx.fillText(titleText, 60, 85);
+                    }
+
+                    // Watermark / Author Handle
+                    if (watermarkText) {
+                        sCtx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+                        sCtx.font = 'bold 20px sans-serif';
+                        sCtx.textAlign = 'right';
+                        sCtx.textBaseline = 'bottom';
+                        sCtx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+                        sCtx.shadowBlur = 4;
+                        sCtx.fillText(watermarkText, targetW - 30, targetH - 30);
+                        sCtx.shadowBlur = 0;
+                    }
+
+                    // Slide 1 Swipe Badge
+                    if (i === 0 && indicator === 'Swipe Badge') {
+                        sCtx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+                        sCtx.beginPath();
+                        sCtx.roundRect(targetW - 160, targetH * 0.5 - 20, 140, 40, 20);
+                        sCtx.fill();
+                        sCtx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+                        sCtx.lineWidth = 1.5;
+                        sCtx.stroke();
+
+                        sCtx.fillStyle = '#ffffff';
+                        sCtx.font = 'bold 14px sans-serif';
+                        sCtx.textAlign = 'center';
+                        sCtx.textBaseline = 'middle';
+                        sCtx.fillText('SWIPE ➔', targetW - 90, targetH * 0.5);
+                    }
+
+                    // Pagination dots
+                    if (indicator === 'Dot Indicators') {
+                        const dotY = targetH - 40;
+                        const spacing = 18;
+                        const startX = targetW / 2 - ((nSlices - 1) * spacing) / 2;
+                        for (let d = 0; d < nSlices; d++) {
+                            sCtx.fillStyle = (d === i) ? '#2563eb' : 'rgba(255, 255, 255, 0.5)';
+                            sCtx.beginPath();
+                            sCtx.arc(startX + d * spacing, dotY, (d === i) ? 5 : 3.5, 0, 2 * Math.PI);
+                            sCtx.fill();
+                        }
+                    }
+
+                    const blob = await new Promise(resolve => sliceCanvas.toBlob(resolve, 'image/jpeg', 0.95));
+                    const filename = `panorama_slice_${i + 1}.jpg`;
+                    generatedBlobs.push({
+                        index: i + 1,
+                        filename: filename,
+                        blob: blob,
+                        url: URL.createObjectURL(blob),
+                    });
+                }
+
+                // 3. Optional Numbered Upload Guide Contact Sheet
+                if (includeGuide) {
+                    const guideCanvas = document.createElement('canvas');
+                    guideCanvas.width = 1200;
+                    guideCanvas.height = 700;
+                    const gCtx = guideCanvas.getContext('2d');
+
+                    gCtx.fillStyle = '#0f172a';
+                    gCtx.fillRect(0, 0, 1200, 700);
+
+                    // Guide Header
+                    gCtx.fillStyle = '#ffffff';
+                    gCtx.font = 'bold 28px sans-serif';
+                    gCtx.textAlign = 'center';
+                    gCtx.fillText('📸 Instagram Carousel Upload Sequence Guide', 600, 50);
+
+                    gCtx.fillStyle = '#94a3b8';
+                    gCtx.font = '16px sans-serif';
+                    gCtx.fillText('Upload each slide in the exact order shown below to create a seamless panoramic swipe post.', 600, 85);
+
+                    // Render mini thumbnails
+                    const cardW = Math.min(180, Math.floor(1000 / nSlices));
+                    const cardH = Math.round(cardW * (targetH / targetW));
+                    const totalCardsW = nSlices * cardW + (nSlices - 1) * 30;
+                    const startX = (1200 - totalCardsW) / 2;
+                    const cardY = 160;
+
+                    for (let i = 0; i < nSlices; i++) {
+                        const cx = startX + i * (cardW + 30);
+
+                        // Card frame
+                        gCtx.fillStyle = '#1e293b';
+                        gCtx.strokeStyle = '#38bdf8';
+                        gCtx.lineWidth = 2;
+                        gCtx.strokeRect(cx, cardY, cardW, cardH);
+
+                        // Thumbnail image
+                        gCtx.drawImage(fullCanvas, i * targetW, 0, targetW, targetH, cx, cardY, cardW, cardH);
+
+                        // Number badge
+                        gCtx.fillStyle = '#2563eb';
+                        gCtx.beginPath();
+                        gCtx.arc(cx + 20, cardY + 20, 14, 0, 2 * Math.PI);
+                        gCtx.fill();
+                        gCtx.fillStyle = '#ffffff';
+                        gCtx.font = 'bold 12px sans-serif';
+                        gCtx.textAlign = 'center';
+                        gCtx.textBaseline = 'middle';
+                        gCtx.fillText((i + 1).toString(), cx + 20, cardY + 20);
+
+                        // Sequence arrow between cards
+                        if (i < nSlices - 1) {
+                            gCtx.fillStyle = '#38bdf8';
+                            gCtx.font = 'bold 24px sans-serif';
+                            gCtx.textAlign = 'center';
+                            gCtx.textBaseline = 'middle';
+                            gCtx.fillText('➔', cx + cardW + 15, cardY + cardH / 2);
+                        }
+                    }
+
+                    // Posting tips footer
+                    gCtx.fillStyle = '#38bdf8';
+                    gCtx.font = 'bold 16px sans-serif';
+                    gCtx.textAlign = 'center';
+                    gCtx.fillText('💡 Pro Tip: Select "Multiple" in Instagram and pick slide #1 first, followed by #2, #3...', 600, 620);
+
+                    const guideBlob = await new Promise(resolve => guideCanvas.toBlob(resolve, 'image/jpeg', 0.95));
+                    generatedBlobs.push({
+                        index: 'Guide',
+                        filename: 'upload_guide.jpg',
+                        blob: guideBlob,
+                        url: URL.createObjectURL(guideBlob),
+                    });
+                }
+
+                displayClientResults();
+                // Trigger auto download of ZIP
+                downloadAllZip();
+
+            } catch (err) {
+                alert('Slicing error: ' + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<span>✂️ Slice Panorama & Download ZIP (Instant)</span>`;
+            }
+        }
+
+        function displayClientResults() {
+            const resultsCard = document.getElementById('resultsCard');
+            const gallery = document.getElementById('galleryGrid');
+
+            gallery.innerHTML = '';
+            resultsCard.classList.remove('hidden');
+
+            generatedBlobs.forEach((item) => {
+                const card = document.createElement('div');
+                card.className = 'card rounded-xl p-2 space-y-2 border border-gray-700/60';
+                card.innerHTML = `
+                    <div class="relative overflow-hidden rounded-lg bg-black">
+                        <img src="${item.url}" class="w-full h-auto object-cover">
+                        <span class="absolute top-2 left-2 bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded shadow">
+                            #${item.index}
+                        </span>
+                    </div>
+                    <div class="flex items-center justify-between text-xs px-1">
+                        <span class="text-gray-400 font-mono truncate max-w-[110px]">${item.filename}</span>
+                        <a href="${item.url}" download="${item.filename}" class="text-blue-400 hover:text-blue-300 font-semibold">Save</a>
+                    </div>
+                `;
+                gallery.appendChild(card);
+            });
+
+            resultsCard.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        async function downloadAllZip() {
+            if (!generatedBlobs.length) return;
+
+            const zip = new JSZip();
+            generatedBlobs.forEach(item => {
+                zip.file(item.filename, item.blob);
+            });
+
+            const zipBlob = await zip.generateAsync({ type: 'blob' });
+            const zipUrl = URL.createObjectURL(zipBlob);
+
+            const a = document.createElement('a');
+            a.href = zipUrl;
+            a.download = 'instagram_carousel_slices.zip';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+    </script>
+</body>
+</html>
