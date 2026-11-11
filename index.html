@@ -488,14 +488,27 @@
             function onPointerMove(e) {
                 if (!isDragging) return;
                 const pt = e.touches ? e.touches[0] : e;
-                const dx = pt.clientX - dragStartX;
-                const dy = pt.clientY - dragStartY;
+                let dx = pt.clientX - dragStartX;
+                let dy = pt.clientY - dragStartY;
 
-                const sensX = 2.0 / (canvas.width || 400);
-                const sensY = 2.0 / (canvas.height || 200);
+                // Account for CSS responsive scale vs internal canvas resolution
+                const rect = canvas.getBoundingClientRect();
+                if (rect.width > 0) {
+                    dx *= (canvas.width / rect.width);
+                }
+                if (rect.height > 0) {
+                    dy *= (canvas.height / rect.height);
+                }
 
-                let newPanX = Math.max(-1, Math.min(1, startPanX - dx * sensX));
-                let newPanY = Math.max(-1, Math.min(1, startPanY - dy * sensY));
+                const excessW = canvas._excessW || 0;
+                const excessH = canvas._excessH || 0;
+
+                const sensX = excessW > 0 ? (2.0 / excessW) : (2.0 / (canvas.width || 400));
+                const sensY = excessH > 0 ? (2.0 / excessH) : (2.0 / (canvas.height || 200));
+
+                // Natural (non-inverted) drag: dragging right moves framing box right, dragging down moves box down
+                let newPanX = Math.max(-1, Math.min(1, startPanX + dx * sensX));
+                let newPanY = Math.max(-1, Math.min(1, startPanY + dy * sensY));
 
                 document.getElementById('panX').value = newPanX;
                 document.getElementById('panY').value = newPanY;
@@ -597,6 +610,8 @@
                 if (origRatio >= targetRatio) {
                     const activeW = ch * targetRatio;
                     const excessW = cw - activeW;
+                    canvas._excessW = excessW;
+                    canvas._excessH = 0;
                     const offsetX = excessW * (panX + 1) / 2;
                     activeX0 = Math.max(0, Math.min(excessW, offsetX));
                     activeX1 = activeX0 + activeW;
@@ -607,6 +622,8 @@
                 } else {
                     const activeH = cw / targetRatio;
                     const excessH = ch - activeH;
+                    canvas._excessW = 0;
+                    canvas._excessH = excessH;
                     const offsetY = excessH * (panY + 1) / 2;
                     activeY0 = Math.max(0, Math.min(excessH, offsetY));
                     activeY1 = activeY0 + activeH;
@@ -616,6 +633,8 @@
                     ctx.fillRect(0, activeY1, cw, ch - activeY1);
                 }
             } else {
+                canvas._excessW = 0;
+                canvas._excessH = 0;
                 document.getElementById('panControls').classList.add('opacity-50', 'pointer-events-none');
             }
 
