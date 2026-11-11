@@ -1,31 +1,50 @@
 """
 Web Application for InstaPanoramaSplitter on Render.com.
-Reuses the core image and video engines to deliver a full-featured browser experience.
+Engineered for low-memory environments (Render Free Tier 512MB RAM ceiling).
+Includes interactive client-side preview with real-time Pan X/Y crop sliders.
 """
 
 import os
-import io
-import zipfile
+import gc
+import uuid
+import time
+import shutil
 import tempfile
-import base64
-from typing import List
+from typing import List, Dict, Any
 from flask import Flask, request, render_template_string, send_file, jsonify
 from PIL import Image, ImageOps
 
-from core.image_engine import SlicingConfig, slice_panorama, save_slices, generate_upload_guide, slice_grid
-from core.video_engine import VideoPanConfig, generate_panning_video, is_ffmpeg_available
+from core.image_engine import SlicingConfig, slice_panorama, save_slices, generate_upload_guide
+from core.video_engine import is_ffmpeg_available
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # 64 MB max upload
+app.config["MAX_CONTENT_LENGTH"] = 40 * 1024 * 1024  # 40 MB max upload
 
-# Modern, mobile-responsive HTML/CSS template
+# Base directory for temporary session exports
+TEMP_BASE = os.path.join(tempfile.gettempdir(), "instapano_sessions")
+os.makedirs(TEMP_BASE, exist_ok=True)
+
+
+def cleanup_old_sessions(max_age_seconds: int = 1800) -> None:
+    """Remove session folders older than 30 minutes to free disk space."""
+    now = time.time()
+    try:
+        for folder in os.listdir(TEMP_BASE):
+            folder_path = os.path.join(TEMP_BASE, folder)
+            if os.path.isdir(folder_path):
+                if now - os.path.getmtime(folder_path) > max_age_seconds:
+                    shutil.rmtree(folder_path, ignore_errors=True)
+    except Exception:
+        pass
+
+
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>📸 InstaPanoramaSplitter — Cloud Web Suite</title>
+    <title>📸 InstaPanoramaSplitter — Web Creator Suite</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { background-color: #0b0f19; color: #f3f4f6; }
@@ -41,35 +60,76 @@ HTML_TEMPLATE = """
                 📸 InstaPanoramaSplitter
             </h1>
             <p class="text-sm sm:text-base text-gray-400">
-                Split panoramas into seamless Instagram carousels, profile puzzle grids, and Reels panning videos.
+                Split panoramas into seamless Instagram carousels with live interactive crop framing.
             </p>
         </header>
 
         <!-- Main Form Card -->
-        <div class="card rounded-2xl p-6 sm:p-8 shadow-xl">
-            <form id="sliceForm" class="space-y-6" enctype="multipart/form-data">
+        <div class="card rounded-2xl p-6 sm:p-8 shadow-xl space-y-6">
+            <form id="sliceForm" class="space-y-6">
                 
-                <!-- Upload Area -->
+                <!-- 1. Upload Area -->
                 <div>
-                    <label class="block text-sm font-semibold text-gray-300 mb-2">1. Select Panorama Photo</label>
-                    <div class="border-2 border-dashed border-gray-700 hover:border-blue-500 rounded-xl p-6 text-center cursor-pointer transition bg-gray-900/50" onclick="document.getElementById('fileInput').click()">
+                    <label class="block text-sm font-semibold text-gray-300 mb-2">1. Choose Panorama Photo</label>
+                    <div id="dropZone" class="border-2 border-dashed border-gray-700 hover:border-blue-500 rounded-xl p-6 text-center cursor-pointer transition bg-gray-900/50" onclick="document.getElementById('fileInput').click()">
                         <input type="file" id="fileInput" name="image" accept="image/*" class="hidden" onchange="handleFileSelect(event)" required>
                         <div id="uploadPrompt" class="space-y-1">
-                            <span class="text-3xl">🌄</span>
-                            <p class="text-sm font-medium text-gray-300">Tap or drag image here</p>
-                            <p class="text-xs text-gray-500">Supports JPG, PNG, WEBP up to 60MB</p>
+                            <span class="text-4xl">🌄</span>
+                            <p class="text-sm font-medium text-gray-300">Click or Drag & Drop Panorama Here</p>
+                            <p class="text-xs text-gray-500">Supports JPG, PNG, WEBP</p>
                         </div>
                         <div id="fileInfo" class="hidden text-sm font-semibold text-blue-400"></div>
                     </div>
                 </div>
 
-                <!-- Settings Grid -->
+                <!-- 2. Live Interactive Canvas Preview Card -->
+                <div id="previewCard" class="hidden space-y-4">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+                            <span>🎯</span> Live Slicing & Pan Framing Preview
+                        </span>
+                        <span id="ratioBadge" class="text-xs font-mono text-blue-400 bg-blue-950/60 px-2.5 py-1 rounded-md border border-blue-800/40"></span>
+                    </div>
+
+                    <!-- Canvas Container -->
+                    <div class="relative bg-black rounded-xl overflow-hidden border border-gray-800 flex items-center justify-center p-2 min-h-[160px]">
+                        <canvas id="previewCanvas" class="max-w-full max-h-[320px] rounded shadow-lg"></canvas>
+                    </div>
+
+                    <!-- Interactive Pan Sliders (X & Y) -->
+                    <div id="panControls" class="bg-gray-900/70 p-4 rounded-xl border border-gray-800 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-gray-300">Crop Position Framing</span>
+                            <button type="button" onclick="resetPan()" class="text-xs text-blue-400 hover:text-blue-300 font-semibold bg-gray-800 px-2 py-0.5 rounded">
+                                Reset Center (0, 0)
+                            </button>
+                        </div>
+                        
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <div class="flex justify-between text-xs text-gray-400 mb-1">
+                                    <span>Horizontal Pan (X)</span>
+                                    <span id="panXVal" class="font-mono">0%</span>
+                                </div>
+                                <input type="range" id="panX" name="pan_x" min="-1" max="1" step="0.02" value="0" oninput="updatePanPreview()" class="w-full accent-blue-500 cursor-pointer">
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-xs text-gray-400 mb-1">
+                                    <span>Vertical Pan (Y)</span>
+                                    <span id="panYVal" class="font-mono">0%</span>
+                                </div>
+                                <input type="range" id="panY" name="pan_y" min="-1" max="1" step="0.02" value="0" oninput="updatePanPreview()" class="w-full accent-blue-500 cursor-pointer">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. Slicing Settings -->
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    
-                    <!-- Number of Slices -->
+                    <!-- Slices -->
                     <div>
-                        <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Number of Slices</label>
-                        <select name="slices" id="slices" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+                        <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Number of Carousel Slices</label>
+                        <select name="slices" id="sliceCount" onchange="updatePanPreview()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
                             <option value="2">2 Slices</option>
                             <option value="3" selected>3 Slices (Most Popular)</option>
                             <option value="4">4 Slices</option>
@@ -82,7 +142,7 @@ HTML_TEMPLATE = """
                     <!-- Aspect Ratio -->
                     <div>
                         <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Instagram Aspect Ratio</label>
-                        <select name="aspect" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+                        <select name="aspect" id="aspectRatio" onchange="updatePanPreview()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
                             <option value="Portrait (4:5)" selected>Portrait 4:5 (1080×1350 px — Feed Optimal)</option>
                             <option value="Square (1:1)">Square 1:1 (1080×1080 px — Classic)</option>
                             <option value="Story (9:16)">Story 9:16 (1080×1920 px — Reels / Stories)</option>
@@ -92,7 +152,7 @@ HTML_TEMPLATE = """
                     <!-- Framing Mode -->
                     <div>
                         <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Framing & Fill Strategy</label>
-                        <select name="fit_mode" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+                        <select name="fit_mode" id="fitMode" onchange="updatePanPreview()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
                             <option value="Standard (Fit & Crop)" selected>Standard 1080px (Fit & Center Crop)</option>
                             <option value="Proportional (Full Width)">Proportional Full Width (No Crop)</option>
                             <option value="Blurred Background Fill">Blurred Background Fill (No Cropping)</option>
@@ -100,9 +160,9 @@ HTML_TEMPLATE = """
                         </select>
                     </div>
 
-                    <!-- Creative Swipe Cue -->
+                    <!-- Engagement Cue -->
                     <div>
-                        <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Engagement Cue</label>
+                        <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Seamless Engagement Cue</label>
                         <select name="indicator" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
                             <option value="None" selected>None</option>
                             <option value="Seam Arrow">Seam Arrow ➔ (Spans Slices)</option>
@@ -112,23 +172,23 @@ HTML_TEMPLATE = """
                     </div>
                 </div>
 
-                <!-- Title & Watermark Inputs -->
+                <!-- Text Overlays -->
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Slide 1 Cover Title (Optional)</label>
+                        <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Slide 1 Title (Optional)</label>
                         <input type="text" name="title" placeholder="e.g. Alpine Sunset" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500">
                     </div>
                     <div>
-                        <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Photographer Credit / Handle</label>
-                        <input type="text" name="watermark" placeholder="e.g. @username" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500">
+                        <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Photographer Credit</label>
+                        <input type="text" name="watermark" placeholder="e.g. @your_account" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500">
                     </div>
                 </div>
 
-                <!-- Toggles -->
+                <!-- Instagram Quality Toggles -->
                 <div class="flex flex-wrap gap-4 text-xs font-medium text-gray-300">
                     <label class="flex items-center gap-2 cursor-pointer">
                         <input type="checkbox" name="srgb" checked class="rounded bg-gray-800 border-gray-700 text-blue-500">
-                        sRGB Color Conversion (Fix desaturation)
+                        sRGB Color Conversion (Fix washed out colors)
                     </label>
                     <label class="flex items-center gap-2 cursor-pointer">
                         <input type="checkbox" name="sharpen" checked class="rounded bg-gray-800 border-gray-700 text-blue-500">
@@ -141,20 +201,20 @@ HTML_TEMPLATE = """
                 </div>
 
                 <!-- Submit Button -->
-                <button type="button" onclick="processSlicing()" id="submitBtn" class="w-full py-3.5 px-6 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl shadow-lg transition duration-150 flex items-center justify-center gap-2">
-                    <span>✂️ Slice Panorama & Download ZIP</span>
+                <button type="button" onclick="submitSlicing()" id="submitBtn" class="w-full py-3.5 px-6 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl shadow-lg transition duration-150 flex items-center justify-center gap-2">
+                    <span>✂️ Slice Panorama & Generate Carousel</span>
                 </button>
             </form>
         </div>
 
-        <!-- Result / Preview Section -->
+        <!-- Result / Gallery Section -->
         <div id="resultsCard" class="hidden card rounded-2xl p-6 sm:p-8 space-y-6">
             <div class="flex items-center justify-between">
                 <h2 class="text-xl font-bold text-white flex items-center gap-2">
-                    <span>✅</span> Generated Slices
+                    <span>✅</span> Generated Carousel Slices
                 </h2>
-                <a id="downloadZipBtn" href="#" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm rounded-lg shadow transition">
-                    ⬇️ Download All (.zip)
+                <a id="downloadZipBtn" href="#" class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm rounded-xl shadow transition flex items-center gap-2">
+                    <span>⬇️</span> Download All as ZIP
                 </a>
             </div>
 
@@ -164,19 +224,156 @@ HTML_TEMPLATE = """
     </div>
 
     <script>
-        let currentZipUrl = null;
+        let loadedImage = null;
 
         function handleFileSelect(event) {
             const file = event.target.files[0];
-            if (file) {
-                document.getElementById('uploadPrompt').classList.add('hidden');
-                const info = document.getElementById('fileInfo');
-                info.textContent = `Selected: ${file.name} (${(file.size / (1024*1024)).toFixed(2)} MB)`;
-                info.classList.remove('hidden');
-            }
+            if (!file) return;
+
+            document.getElementById('uploadPrompt').classList.add('hidden');
+            const info = document.getElementById('fileInfo');
+            info.textContent = `📄 ${file.name} (${(file.size / (1024*1024)).toFixed(2)} MB)`;
+            info.classList.remove('hidden');
+
+            // Load into memory client-side using FileReader for instant zero-server preview
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                loadedImage = new Image();
+                loadedImage.onload = function() {
+                    document.getElementById('previewCard').classList.remove('hidden');
+                    updatePanPreview();
+                };
+                loadedImage.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
         }
 
-        async function processSlicing() {
+        function resetPan() {
+            document.getElementById('panX').value = 0;
+            document.getElementById('panY').value = 0;
+            updatePanPreview();
+        }
+
+        function updatePanPreview() {
+            if (!loadedImage) return;
+
+            const canvas = document.getElementById('previewCanvas');
+            const ctx = canvas.getContext('2d');
+
+            const nSlices = parseInt(document.getElementById('sliceCount').value) || 3;
+            const aspectVal = document.getElementById('aspectRatio').value;
+            const fitMode = document.getElementById('fitMode').value;
+            const panX = parseFloat(document.getElementById('panX').value) || 0;
+            const panY = parseFloat(document.getElementById('panY').value) || 0;
+
+            document.getElementById('panXVal').textContent = `${Math.round(panX * 100)}%`;
+            document.getElementById('panYVal').textContent = `${Math.round(panY * 100)}%`;
+
+            // Aspect targets
+            let targetW = 1080, targetH = 1350;
+            if (aspectVal.includes('1:1')) { targetW = 1080; targetH = 1080; }
+            else if (aspectVal.includes('9:16')) { targetW = 1080; targetH = 1920; }
+
+            const totalTargetW = targetW * nSlices;
+            const targetRatio = totalTargetW / targetH;
+            const origW = loadedImage.naturalWidth;
+            const origH = loadedImage.naturalHeight;
+            const origRatio = origW / origH;
+
+            document.getElementById('ratioBadge').textContent = 
+                `${origW}×${origH} px (${origRatio.toFixed(2)}:1) ➔ ${nSlices} Slices @ ${targetW}×${targetH}`;
+
+            // Scale canvas to fit max width
+            const maxDisplayW = Math.min(760, window.innerWidth - 60);
+            const scale = maxDisplayW / origW;
+            const cw = Math.max(20, Math.round(origW * scale));
+            const ch = Math.max(20, Math.round(origH * scale));
+
+            canvas.width = cw;
+            canvas.height = ch;
+
+            // Draw full base photo
+            ctx.drawImage(loadedImage, 0, 0, cw, ch);
+
+            // Calculate active crop rectangle
+            let activeX0 = 0, activeX1 = cw, activeY0 = 0, activeY1 = ch;
+
+            if (fitMode.includes('Standard')) {
+                document.getElementById('panControls').classList.remove('opacity-50', 'pointer-events-none');
+                if (origRatio >= targetRatio) {
+                    // Wider than carousel: crop left/right
+                    const activeW = ch * targetRatio;
+                    const excessW = cw - activeW;
+                    const offsetX = excessW * (panX + 1) / 2;
+                    activeX0 = Math.max(0, Math.min(excessW, offsetX));
+                    activeX1 = activeX0 + activeW;
+
+                    // Darken cropped side margins
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+                    ctx.fillRect(0, 0, activeX0, ch);
+                    ctx.fillRect(activeX1, 0, cw - activeX1, ch);
+                } else {
+                    // Taller than carousel: crop top/bottom
+                    const activeH = cw / targetRatio;
+                    const excessH = ch - activeH;
+                    const offsetY = excessH * (panY + 1) / 2;
+                    activeY0 = Math.max(0, Math.min(excessH, offsetY));
+                    activeY1 = activeY0 + activeH;
+
+                    // Darken cropped top/bottom margins
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+                    ctx.fillRect(0, 0, cw, activeY0);
+                    ctx.fillRect(0, activeY1, cw, ch - activeY1);
+                }
+            } else {
+                document.getElementById('panControls').classList.add('opacity-50', 'pointer-events-none');
+            }
+
+            const activeSpanW = activeX1 - activeX0;
+            const sliceSpanW = activeSpanW / nSlices;
+
+            // Draw divider lines and numbered slice badges
+            for (let i = 0; i < nSlices; i++) {
+                const x0 = activeX0 + i * sliceSpanW;
+                const x1 = activeX0 + (i + 1) * sliceSpanW;
+
+                // Vertical separator
+                if (i > 0) {
+                    ctx.strokeStyle = '#00ebff';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(x0, activeY0);
+                    ctx.lineTo(x0, activeY1);
+                    ctx.stroke();
+                }
+
+                // Number badge
+                const cx = (x0 + x1) / 2;
+                const cy = activeY0 + 16;
+                if (cy + 12 < activeY1) {
+                    ctx.fillStyle = '#2563eb';
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 11, 0, 2 * Math.PI);
+                    ctx.fill();
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 11px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText((i + 1).toString(), cx, cy);
+                }
+            }
+
+            // Outline of active frame
+            ctx.strokeStyle = '#00ebff';
+            ctx.lineWidth = 2.5;
+            ctx.strokeRect(activeX0, activeY0, activeSpanW, activeY1 - activeY0);
+        }
+
+        async function submitSlicing() {
             const form = document.getElementById('sliceForm');
             const fileInput = document.getElementById('fileInput');
             if (!fileInput.files.length) {
@@ -186,7 +383,7 @@ HTML_TEMPLATE = """
 
             const btn = document.getElementById('submitBtn');
             btn.disabled = true;
-            btn.innerHTML = `<svg class="animate-spin h-5 w-5 mr-3 text-white" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Processing slices...`;
+            btn.innerHTML = `<span class="animate-spin inline-block mr-2">⏳</span> Processing on Cloud Server...`;
 
             const formData = new FormData(form);
 
@@ -198,16 +395,16 @@ HTML_TEMPLATE = """
 
                 if (!response.ok) {
                     const err = await response.json();
-                    throw new Error(err.error || 'Server error');
+                    throw new Error(err.error || 'Server error occurred');
                 }
 
                 const data = await response.json();
                 displayResults(data);
             } catch (err) {
-                alert('Error processing image: ' + err.message);
+                alert('Slicing failed: ' + err.message);
             } finally {
                 btn.disabled = false;
-                btn.innerHTML = `<span>✂️ Slice Panorama & Download ZIP</span>`;
+                btn.innerHTML = `<span>✂️ Slice Panorama & Generate Carousel</span>`;
             }
         }
 
@@ -218,22 +415,21 @@ HTML_TEMPLATE = """
 
             gallery.innerHTML = '';
             resultsCard.classList.remove('hidden');
-
             downloadZipBtn.href = data.zip_url;
 
-            data.slices.forEach((slice, idx) => {
+            data.slices.forEach((slice) => {
                 const card = document.createElement('div');
                 card.className = 'card rounded-xl p-2 space-y-2 border border-gray-700/60';
                 card.innerHTML = `
                     <div class="relative overflow-hidden rounded-lg bg-black">
-                        <img src="${slice.data_url}" class="w-full h-auto object-cover" loading="lazy">
-                        <span class="absolute top-2 left-2 bg-blue-600/90 text-white text-xs font-bold px-2 py-0.5 rounded shadow">
-                            #${idx + 1}
+                        <img src="${slice.url}" class="w-full h-auto object-cover" loading="lazy">
+                        <span class="absolute top-2 left-2 bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded shadow">
+                            #${slice.index}
                         </span>
                     </div>
                     <div class="flex items-center justify-between text-xs px-1">
-                        <span class="text-gray-400 font-mono">${slice.filename}</span>
-                        <a href="${slice.data_url}" download="${slice.filename}" class="text-blue-400 hover:text-blue-300 font-semibold">Save</a>
+                        <span class="text-gray-400 font-mono truncate max-w-[110px]">${slice.filename}</span>
+                        <a href="${slice.url}" download="${slice.filename}" class="text-blue-400 hover:text-blue-300 font-semibold">Save</a>
                     </div>
                 `;
                 gallery.appendChild(card);
@@ -254,16 +450,31 @@ def index():
 
 @app.route("/api/slice", methods=["POST"])
 def api_slice():
+    """
+    Streamlined, memory-efficient slicing endpoint.
+    Processes image and writes slices directly to disk, avoiding RAM exhaustion.
+    """
+    cleanup_old_sessions()
+
+    session_id = uuid.uuid4().hex
+    session_dir = os.path.join(TEMP_BASE, session_id)
+    os.makedirs(session_dir, exist_ok=True)
+
+    temp_input_path = os.path.join(session_dir, "input_source.img")
+
     try:
         if "image" not in request.files:
-            return jsonify({"error": "No image file uploaded"}), 400
+            return jsonify({"error": "No image file provided"}), 400
 
         file = request.files["image"]
         if not file.filename:
             return jsonify({"error": "Empty filename"}), 400
 
-        # Load image with orientation correction
-        raw_img = Image.open(file.stream)
+        # Stream directly to disk to prevent loading raw bytes in RAM
+        file.save(temp_input_path)
+
+        # Load with orientation normalization
+        raw_img = Image.open(temp_input_path)
         img = ImageOps.exif_transpose(raw_img)
 
         # Parse form config
@@ -271,6 +482,8 @@ def api_slice():
         aspect_ratio = request.form.get("aspect", "Portrait (4:5)")
         fit_mode = request.form.get("fit_mode", "Standard (Fit & Crop)")
         indicator = request.form.get("indicator", "None")
+        pan_x = float(request.form.get("pan_x", 0.0))
+        pan_y = float(request.form.get("pan_y", 0.0))
         title_text = request.form.get("title", "").strip() or None
         watermark_text = request.form.get("watermark", "").strip() or None
         apply_srgb = "srgb" in request.form
@@ -281,6 +494,8 @@ def api_slice():
             num_slices=num_slices,
             aspect_ratio=aspect_ratio,
             fit_mode=fit_mode,
+            pan_offset_x=pan_x,
+            pan_offset_y=pan_y,
             swipe_indicator=indicator,
             title_text=title_text,
             watermark_text=watermark_text,
@@ -290,82 +505,100 @@ def api_slice():
             jpeg_quality=95,
         )
 
+        # Slice panorama
         slices = slice_panorama(img, config)
 
-        # Prepare ZIP file in memory
-        zip_buffer = io.BytesIO()
-        slice_data = []
+        # Immediately free original image buffers
+        del raw_img
+        del img
+        gc.collect()
 
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-            for i, slice_img in enumerate(slices):
-                filename = f"panorama_slice_{i + 1}.jpg"
+        # Save slices directly to disk in session folder
+        saved_paths = save_slices(
+            slices=slices,
+            export_dir=session_dir,
+            prefix="panorama_slice",
+            ext="jpg",
+            jpeg_quality=95,
+        )
 
-                # Save slice to byte buffer
-                buf = io.BytesIO()
-                slice_img.convert("RGB").save(buf, format="JPEG", quality=95, optimize=True)
-                buf.seek(0)
-                img_bytes = buf.getvalue()
+        # Build response slice references
+        slice_info: List[Dict[str, Any]] = []
+        for idx, fpath in enumerate(saved_paths):
+            fname = os.path.basename(fpath)
+            slice_info.append({
+                "index": idx + 1,
+                "filename": fname,
+                "url": f"/api/session/{session_id}/slice/{idx + 1}",
+            })
 
-                # Add to zip
-                zip_file.writestr(filename, img_bytes)
+        # Generate optional upload guide
+        if generate_guide:
+            guide_path = os.path.join(session_dir, "upload_guide.jpg")
+            generate_upload_guide(slices, guide_path, title="Instagram Carousel Upload Guide")
+            saved_paths.append(guide_path)
+            slice_info.append({
+                "index": "Guide",
+                "filename": "upload_guide.jpg",
+                "url": f"/api/session/{session_id}/slice/guide",
+            })
 
-                # Base64 for web display
-                b64 = base64.b64encode(img_bytes).decode("ascii")
-                slice_data.append({
-                    "filename": filename,
-                    "data_url": f"data:image/jpeg;base64,{b64}",
-                })
+        # Free slice objects from memory
+        del slices
+        gc.collect()
 
-            # Optional Upload Guide
-            if generate_guide:
-                with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_guide:
-                    tmp_guide_path = tmp_guide.name
+        # Create zip directly on disk
+        import zipfile
+        zip_path = os.path.join(session_dir, "instagram_carousel.zip")
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for fpath in saved_paths:
+                zf.write(fpath, arcname=os.path.basename(fpath))
 
-                try:
-                    generate_upload_guide(slices, tmp_guide_path, title=f"Upload Guide — {file.filename}")
-                    with open(tmp_guide_path, "rb") as f:
-                        guide_bytes = f.read()
-                    zip_file.writestr("upload_guide.jpg", guide_bytes)
-                    b64_guide = base64.b64encode(guide_bytes).decode("ascii")
-                    slice_data.append({
-                        "filename": "upload_guide.jpg",
-                        "data_url": f"data:image/jpeg;base64,{b64_guide}",
-                    })
-                finally:
-                    if os.path.exists(tmp_guide_path):
-                        os.remove(tmp_guide_path)
-
-        zip_buffer.seek(0)
-
-        # Cache zip in a temporary location or serve directly
-        temp_zip = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
-        temp_zip.write(zip_buffer.getvalue())
-        temp_zip.close()
-
-        zip_id = os.path.basename(temp_zip.name)
+        # Remove temporary raw input to save disk space
+        if os.path.exists(temp_input_path):
+            os.remove(temp_input_path)
 
         return jsonify({
-            "slices": slice_data,
-            "zip_url": f"/download-zip/{zip_id}",
+            "session_id": session_id,
+            "slices": slice_info,
+            "zip_url": f"/api/session/{session_id}/download-zip",
         })
 
     except Exception as e:
+        shutil.rmtree(session_dir, ignore_errors=True)
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/download-zip/<zip_id>")
-def download_zip(zip_id):
-    # Sanitize filename
-    safe_name = os.path.basename(zip_id)
-    path = os.path.join(tempfile.gettempdir(), safe_name)
-    if os.path.exists(path) and path.endswith(".zip"):
+@app.route("/api/session/<session_id>/slice/<slice_id>")
+def get_slice(session_id, slice_id):
+    """Stream individual slice from disk without holding it in memory."""
+    safe_sid = os.path.basename(session_id)
+    session_dir = os.path.join(TEMP_BASE, safe_sid)
+
+    if slice_id == "guide":
+        target_file = os.path.join(session_dir, "upload_guide.jpg")
+    else:
+        target_file = os.path.join(session_dir, f"panorama_slice_{slice_id}.jpg")
+
+    if os.path.exists(target_file):
+        return send_file(target_file, mimetype="image/jpeg")
+    return "Slice not found", 404
+
+
+@app.route("/api/session/<session_id>/download-zip")
+def get_zip(session_id):
+    """Stream carousel zip file from disk."""
+    safe_sid = os.path.basename(session_id)
+    zip_path = os.path.join(TEMP_BASE, safe_sid, "instagram_carousel.zip")
+
+    if os.path.exists(zip_path):
         return send_file(
-            path,
+            zip_path,
             as_attachment=True,
             download_name="instagram_carousel_slices.zip",
             mimetype="application/zip",
         )
-    return "Archive not found or expired.", 404
+    return "Archive not found", 404
 
 
 @app.route("/health")

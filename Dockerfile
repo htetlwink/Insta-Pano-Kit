@@ -24,5 +24,5 @@ COPY . /app/
 ENV PORT=8080
 EXPOSE 8080
 
-# Run production Gunicorn server
-CMD exec gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120 web_app:app
+# Run production Gunicorn server with 1 worker optimized for Render's 512MB memory limit
+CMD exec gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 180 --max-requests 50 --max-requests-jitter 10 web_app:app

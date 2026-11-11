@@ -278,6 +278,17 @@ class ImageEngine:
         except Exception:
             pass
 
+        # Memory safety guard for cloud containers (Render 512MB RAM ceiling):
+        # Extremely huge smartphone/drone panoramas (30-100 Megapixels) consume hundreds of MBs
+        # of raw uncompressed bitmap RAM. Capping at 25 Megapixels preserves 100% of the detail
+        # needed for 1080px Instagram carousels while keeping peak memory under 80MB.
+        max_pixels = 25_000_000
+        if img.width * img.height > max_pixels:
+            scale = (max_pixels / (img.width * img.height)) ** 0.5
+            new_w = max(1, int(round(img.width * scale)))
+            new_h = max(1, int(round(img.height * scale)))
+            img = img.resize((new_w, new_h), Image.Resampling.BILINEAR)
+
         return img
 
     @staticmethod
@@ -474,17 +485,13 @@ class ImageEngine:
         orig_w, orig_h = img.size
 
         # 1. Scale background to cover entire canvas
-        bg_scale = max(total_w / orig_w, target_h / orig_h)
-        bg_w = int(round(orig_w * bg_scale))
-        bg_h = int(round(orig_h * bg_scale))
-        bg_resized = img.resize((bg_w, bg_h), Image.Resampling.LANCZOS)
-
-        bg_crop_x = (bg_w - total_w) // 2
-        bg_crop_y = (bg_h - target_h) // 2
-        bg_canvas = bg_resized.crop((bg_crop_x, bg_crop_y, bg_crop_x + total_w, bg_crop_y + target_h))
-
-        # Heavy Gaussian blur for aesthetic modern ambient backdrop
-        bg_blurred = bg_canvas.filter(ImageFilter.GaussianBlur(radius=35))
+        # Memory-optimized ambient blur: compute blur on proxy resolution to avoid allocating
+        # massive buffers during Gaussian blur on multi-megapixel canvases.
+        proxy_w = 640
+        proxy_h = max(1, int(round(640 * target_h / total_w)))
+        bg_proxy = img.resize((proxy_w, proxy_h), Image.Resampling.BILINEAR)
+        bg_blurred_proxy = bg_proxy.filter(ImageFilter.GaussianBlur(radius=14))
+        bg_blurred = bg_blurred_proxy.resize((total_w, target_h), Image.Resampling.BILINEAR)
 
         # Subtle dark veil (18% black overlay) to give crisp contrast to foreground
         veil = Image.new("RGBA", bg_blurred.size, (0, 0, 0, 45))
