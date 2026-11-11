@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.DS_Store
+*.mp4
+*.zip
+panorama_slice_*.jpg
+panorama_slice_*.png
+20261107_*.jpg
+.venv/
+env/
