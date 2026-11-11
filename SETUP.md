@@ -118,29 +118,41 @@ git push -u origin main
 
 ### Step 2: Deploy to Render.com
 
-#### Option A: Automatic 1-Click Blueprint (Recommended)
+#### ⚡ Option A: Instant Static Site (Zero Loading Screen • Instantaneous 0s Cold Start)
+> **Why this option?** Because `index.html` runs 100% inside the user's browser (HTML5 Canvas + JSZip + Web Audio API), a **Render Static Site** is hosted on Render's global CDN:
+> - **Never sleeps / never spins down** (unlike Render free Docker web services which sleep after 15 min).
+> - **Loads instantly in <100ms with ZERO loading screen**.
+> - **100% Free** forever.
+
 1. Log in to [dashboard.render.com](https://dashboard.render.com).
-2. Click **New +** (top right) ➔ Select **Blueprint**.
-3. Select your GitHub repository.
-4. Render automatically detects **`render.yaml`** and sets up:
-   * **Service Type:** Web Service
-   * **Runtime:** Docker (with FFmpeg included)
-   * **Plan:** Free
-   * **Health Check Path:** `/health`
-5. Click **Apply**.
+2. Click **New +** ➔ Select **Static Site**.
+3. Connect your GitHub repository.
+4. Set the fields:
+   * **Name:** `instapano-web`
+   * **Branch:** `main`
+   * **Build Command:** *(leave empty)*
+   * **Publish Directory:** `.` *(a single dot for the repository root)*
+5. Click **Create Static Site**.
+Your website URL (e.g. `https://instapano-web.onrender.com`) is live immediately with 0s loading time!
 
 ---
 
-#### Option B: Manual Web Service Setup
-1. Log in to [dashboard.render.com](https://dashboard.render.com).
-2. Click **New +** ➔ Select **Web Service**.
-3. Choose your GitHub repository.
-4. Enter the configuration:
-   * **Name:** `instapanorama-splitter`
-   * **Region:** Any region (e.g., *Oregon*, *Frankfurt*, *Singapore*)
-   * **Language / Runtime:** **Docker** *(Important: Docker installs FFmpeg automatically)*
-   * **Instance Type:** **Free**
-5. Click **Create Web Service**.
+#### 🐋 Option B: Full Blueprint Deployment (Both Static App + Python Docker API)
+1. In [dashboard.render.com](https://dashboard.render.com), click **New +** ➔ **Blueprint**.
+2. Select your GitHub repository.
+3. Render automatically detects **`render.yaml`** and provisions:
+   * `instapano-instant-web`: Global CDN Static Site (instant loading, no sleep).
+   * `instapanorama-splitter-api`: Docker/Flask backend with FFmpeg.
+4. Click **Apply**.
+
+---
+
+#### 🌐 Option C: GitHub Pages (Instant Free Hosting)
+You can also host `index.html` completely free on GitHub with zero external accounts:
+1. Open your repository on GitHub.
+2. Go to **Settings** ➔ **Pages**.
+3. Under **Branch**, select `main` and folder `/ (root)`.
+4. Click **Save**. Your site will be live instantly at `https://<your-username>.github.io/<repo-name>/`!
 
 ---
 

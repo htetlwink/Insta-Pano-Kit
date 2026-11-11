@@ -1,6 +1,14 @@
 services:
+  # 1. Instant HTML Web App (0s Cold Start, Never Sleeps, Global CDN, 0 Loading Screen)
+  - type: static
+    name: instapano-instant-web
+    buildCommand: ""
+    staticPublishPath: "."
+    pullRequestPreviewsEnabled: false
+
+  # 2. Optional Python/Docker Backend API (With FFmpeg for server-side processing)
   - type: web
-    name: instapanorama-splitter
+    name: instapanorama-splitter-api
     env: docker
     plan: free
     healthCheckPath: /health
