@@ -131,6 +131,50 @@ class TestVideoEngine(unittest.TestCase):
         self.assertTrue(os.path.exists(res_path))
         self.assertGreater(os.path.getsize(res_path), 500)
 
+    def test_generate_zoom_and_reveal(self) -> None:
+        """Test Zoom and Reveal animation: full panorama letterbox -> ease zoom -> pan left to right."""
+        out_mp4 = os.path.join(self.temp_dir, "zoom_and_reveal.mp4")
+        progress_events = []
+
+        def on_progress(p: float, msg: str):
+            progress_events.append((p, msg))
+
+        config = VideoPanConfig(
+            target_ratio="Reels/Story (9:16)",
+            duration_seconds=3.0,
+            fps=30,
+            direction="Zoom and Reveal",
+            output_path=out_mp4,
+        )
+
+        res_path = generate_panning_video(
+            self.pano_path,
+            config=config,
+            progress_callback=on_progress,
+        )
+
+        self.assertEqual(res_path, out_mp4)
+        self.assertTrue(os.path.exists(out_mp4))
+        self.assertGreater(os.path.getsize(out_mp4), 1000)
+        self.assertTrue(len(progress_events) > 0)
+        self.assertEqual(progress_events[-1][0], 1.0)
+
+        # Verify stream dimensions and codec using ffprobe
+        cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height,codec_name",
+            "-of", "csv=p=0",
+            out_mp4,
+        ]
+        probe_res = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(probe_res.returncode, 0, f"ffprobe error: {probe_res.stderr}")
+        output = probe_res.stdout.strip()
+        self.assertIn("h264", output)
+        self.assertIn("1080", output)
+        self.assertIn("1920", output)
+
     def test_missing_file_raises_error(self) -> None:
         """Verify error raised for non-existent image file."""
         config = VideoPanConfig(output_path=os.path.join(self.temp_dir, "dummy.mp4"))

@@ -35,6 +35,7 @@ from core.image_engine import (
     slice_panorama,
     save_slices,
     generate_upload_guide,
+    apply_color_filter,
 )
 from gui.phone_simulator import PhoneSimulatorModal
 from gui.qr_modal import QRTransferModal
@@ -108,6 +109,15 @@ class InstaPanoramaSplitter(ctk.CTk):
         "Dot Indicators",
     ]
 
+    COLOR_PRESETS = [
+        "None",
+        "Cinematic Moody",
+        "Kodak Warmth",
+        "Vintage 35mm",
+        "B&W High Contrast",
+        "Film Grain",
+    ]
+
     def __init__(self) -> None:
         super().__init__()
 
@@ -133,6 +143,8 @@ class InstaPanoramaSplitter(ctk.CTk):
         self.pan_x_var = ctk.DoubleVar(value=0.0)
         self.pan_y_var = ctk.DoubleVar(value=0.0)
         self.swipe_indicator_var = ctk.StringVar(value="None")
+        self.color_filter_var = ctk.StringVar(value="None")
+        self.split_headline_var = ctk.StringVar(value="")
         self.title_text_var = ctk.StringVar(value="")
         self.watermark_text_var = ctk.StringVar(value="")
         self.format_var = ctk.StringVar(value="JPEG")
@@ -142,6 +154,16 @@ class InstaPanoramaSplitter(ctk.CTk):
         self.apply_srgb_var = ctk.BooleanVar(value=True)
         self.smart_sharpen_var = ctk.BooleanVar(value=True)
         self.upload_guide_var = ctk.BooleanVar(value=True)
+        self.story_mode_var = ctk.BooleanVar(value=False)
+        self.camera_card_var = ctk.BooleanVar(value=False)
+
+        # Drag-to-pan state
+        self._drag_start_x: Optional[float] = None
+        self._drag_start_y: Optional[float] = None
+        self._drag_start_pan_x: float = 0.0
+        self._drag_start_pan_y: float = 0.0
+        self._preview_excess_w: float = 0.0
+        self._preview_excess_h: float = 0.0
 
         # Build UI
         self._build_ui()
@@ -366,11 +388,15 @@ class InstaPanoramaSplitter(ctk.CTk):
 
         self.lbl_preview = ctk.CTkLabel(
             self.preview_container,
-            text="🌄 Live Slice & Pan Preview\nLoad an image to visualize slice dividers and crop framing in real time",
+            text="🌄 Live Slice & Pan Preview\nLoad an image to visualize slice dividers and crop framing in real time\n(💡 Click & drag directly on preview to pan)",
             font=ctk.CTkFont(size=13),
             text_color=("gray45", "gray55"),
+            cursor="hand2",
         )
         self.lbl_preview.pack(fill="both", expand=True, padx=8, pady=8)
+        self.lbl_preview.bind("<ButtonPress-1>", self._on_preview_drag_start)
+        self.lbl_preview.bind("<B1-Motion>", self._on_preview_drag_motion)
+        self.lbl_preview.bind("<ButtonRelease-1>", self._on_preview_drag_end)
 
         # Pan Offset Controls (Horizontal & Vertical Framing Sliders)
         pan_card = ctk.CTkFrame(card, fg_color=("gray92", "#131720"), corner_radius=8)
@@ -381,7 +407,7 @@ class InstaPanoramaSplitter(ctk.CTk):
 
         ctk.CTkLabel(
             pan_header,
-            text="🎯 Pan & Crop Framing Offset:",
+            text="🎯 Pan & Crop Framing Offset (or drag preview above):",
             font=ctk.CTkFont(size=12, weight="bold"),
             text_color=("#2563eb", "#60a5fa"),
         ).pack(side="left")
@@ -620,23 +646,57 @@ class InstaPanoramaSplitter(ctk.CTk):
         )
         self.entry_wm.pack(fill="x")
 
-        # ---------------- Row 4: Instagram Quality & Protections ----------------
+        # ---------------- Row 4: Color Grading Presets & Split-Seam Headline ----------------
+        row4 = ctk.CTkFrame(card, fg_color="transparent")
+        row4.pack(fill="x", padx=16, pady=(0, 10))
+        row4.columnconfigure(0, weight=1)
+        row4.columnconfigure(1, weight=1)
+
+        col_color = ctk.CTkFrame(row4, fg_color="transparent")
+        col_color.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+
+        ctk.CTkLabel(col_color, text="🎨 Film Color Grading Preset:", font=ctk.CTkFont(size=11, weight="bold")).pack(anchor="w", pady=(0, 2))
+        self.opt_color_filter = ctk.CTkOptionMenu(
+            col_color,
+            values=self.COLOR_PRESETS,
+            variable=self.color_filter_var,
+            command=lambda v: self._update_preview(),
+            height=28,
+            font=ctk.CTkFont(size=11),
+        )
+        self.opt_color_filter.pack(fill="x")
+
+        col_headline = ctk.CTkFrame(row4, fg_color="transparent")
+        col_headline.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
+
+        ctk.CTkLabel(col_headline, text="🔤 Split-Seam Headline (Spans Slide 1 & 2):", font=ctk.CTkFont(size=11, weight="bold")).pack(anchor="w", pady=(0, 2))
+        self.entry_headline = ctk.CTkEntry(
+            col_headline,
+            textvariable=self.split_headline_var,
+            placeholder_text="e.g. DISCOVER THE UNKNOWN",
+            height=28,
+            font=ctk.CTkFont(size=11),
+        )
+        self.entry_headline.pack(fill="x")
+        self.entry_headline.bind("<KeyRelease>", lambda e: self._update_preview())
+
+        # ---------------- Row 5: Instagram Quality & Add-ons ----------------
         opt_box = ctk.CTkFrame(card, fg_color=("gray92", "#131720"), corner_radius=8)
         opt_box.pack(fill="x", padx=16, pady=(0, 12))
 
-        opt_box_inner = ctk.CTkFrame(opt_box, fg_color="transparent")
-        opt_box_inner.pack(fill="x", padx=12, pady=8)
+        opt_box_inner1 = ctk.CTkFrame(opt_box, fg_color="transparent")
+        opt_box_inner1.pack(fill="x", padx=12, pady=(8, 4))
 
         ctk.CTkCheckBox(
-            opt_box_inner,
-            text="sRGB Color Space (Prevents washed out colors on Instagram)",
+            opt_box_inner1,
+            text="sRGB Color Space (Prevents washed out colors)",
             variable=self.apply_srgb_var,
             font=ctk.CTkFont(size=11, weight="bold"),
             height=20,
         ).pack(side="left", padx=(0, 14))
 
         ctk.CTkCheckBox(
-            opt_box_inner,
+            opt_box_inner1,
             text="Smart Sharpen (1080px Retina boost)",
             variable=self.smart_sharpen_var,
             font=ctk.CTkFont(size=11, weight="bold"),
@@ -644,9 +704,29 @@ class InstaPanoramaSplitter(ctk.CTk):
         ).pack(side="left", padx=(0, 14))
 
         ctk.CTkCheckBox(
-            opt_box_inner,
+            opt_box_inner1,
             text="Numbered Upload Guide (upload_guide.jpg)",
             variable=self.upload_guide_var,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            height=20,
+        ).pack(side="left")
+
+        opt_box_inner2 = ctk.CTkFrame(opt_box, fg_color="transparent")
+        opt_box_inner2.pack(fill="x", padx=12, pady=(0, 8))
+
+        ctk.CTkCheckBox(
+            opt_box_inner2,
+            text="Instagram Stories Mode (9:16 Tap-Through Prompts)",
+            variable=self.story_mode_var,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            height=20,
+            command=self._update_preview,
+        ).pack(side="left", padx=(0, 14))
+
+        ctk.CTkCheckBox(
+            opt_box_inner2,
+            text="Append Photography Specs Card (Camera/Lens EXIF)",
+            variable=self.camera_card_var,
             font=ctk.CTkFont(size=11, weight="bold"),
             height=20,
         ).pack(side="left")
@@ -805,6 +885,44 @@ class InstaPanoramaSplitter(ctk.CTk):
         self.lbl_pan_y.configure(text="Vertical Pan (Y): Center (0%)")
         self._update_preview()
 
+    def _on_preview_drag_start(self, event) -> None:
+        """Record start position for pointer drag-to-pan."""
+        if self.pil_source_image is None:
+            return
+        self._drag_start_x = event.x
+        self._drag_start_y = event.y
+        self._drag_start_pan_x = self.pan_x_var.get()
+        self._drag_start_pan_y = self.pan_y_var.get()
+
+    def _on_preview_drag_motion(self, event) -> None:
+        """Update horizontal/vertical pan dynamically as user drags the preview."""
+        if self._drag_start_x is None or self.pil_source_image is None:
+            return
+        dx = event.x - self._drag_start_x
+        dy = event.y - self._drag_start_y
+
+        scale_x = self._preview_excess_w if self._preview_excess_w > 0 else 120.0
+        scale_y = self._preview_excess_h if self._preview_excess_h > 0 else 120.0
+
+        delta_x = (dx / scale_x) * 2.0
+        delta_y = (dy / scale_y) * 2.0
+
+        new_px = max(-1.0, min(1.0, self._drag_start_pan_x + delta_x))
+        new_py = max(-1.0, min(1.0, self._drag_start_pan_y + delta_y))
+
+        self.pan_x_var.set(round(new_px, 3))
+        self.slider_pan_x.set(new_px)
+        self.pan_y_var.set(round(new_py, 3))
+        self.slider_pan_y.set(new_py)
+        self.lbl_pan_x.configure(text=f"Horizontal Pan (X): {int(round(new_px * 100)):+d}%")
+        self.lbl_pan_y.configure(text=f"Vertical Pan (Y): {int(round(new_py * 100)):+d}%")
+        self._update_preview()
+
+    def _on_preview_drag_end(self, event) -> None:
+        """Finalize drag-to-pan gesture."""
+        self._drag_start_x = None
+        self._drag_start_y = None
+
     def _update_summary_info(self) -> None:
         n = self.num_slices_var.get()
         aspect_val = self.aspect_mode_var.get()
@@ -908,6 +1026,13 @@ class InstaPanoramaSplitter(ctk.CTk):
             ph = max(20, int(round(orig_h * scale)))
 
             thumb = orig.resize((pw, ph), Image.Resampling.LANCZOS).convert("RGBA")
+
+            # Apply color filter preview if enabled
+            cf = self.color_filter_var.get()
+            if cf and cf != "None":
+                thumb_rgb = apply_color_filter(thumb.convert("RGB"), cf)
+                thumb = thumb_rgb.convert("RGBA")
+
             overlay = Image.new("RGBA", thumb.size, (0, 0, 0, 0))
             draw = ImageDraw.Draw(overlay)
 
@@ -920,6 +1045,8 @@ class InstaPanoramaSplitter(ctk.CTk):
                     # Panorama wider than carousel: crop left/right with pan_x
                     active_w = ph * target_ratio
                     excess_w = pw - active_w
+                    self._preview_excess_w = excess_w
+                    self._preview_excess_h = 0.0
                     # pan_x: -1.0 leftmost, 0.0 center, 1.0 rightmost
                     offset_x = excess_w * (pan_x + 1.0) / 2.0
                     offset_x = max(0.0, min(excess_w, offset_x))
@@ -938,6 +1065,8 @@ class InstaPanoramaSplitter(ctk.CTk):
                     # Panorama taller than carousel: crop top/bottom with pan_y
                     active_h = pw / target_ratio
                     excess_h = ph - active_h
+                    self._preview_excess_w = 0.0
+                    self._preview_excess_h = excess_h
                     offset_y = excess_h * (pan_y + 1.0) / 2.0
                     offset_y = max(0.0, min(excess_h, offset_y))
 
@@ -952,6 +1081,8 @@ class InstaPanoramaSplitter(ctk.CTk):
                         draw.rectangle([(0, active_y1), (pw, ph)], fill=(0, 0, 0, 160))
             else:
                 # Proportional or Blurred Fill: 100% is active
+                self._preview_excess_w = 0.0
+                self._preview_excess_h = 0.0
                 active_x0 = 0.0
                 active_x1 = float(pw)
                 active_y0 = 0.0
@@ -987,6 +1118,27 @@ class InstaPanoramaSplitter(ctk.CTk):
                 outline=(0, 235, 255, 240),
                 width=2,
             )
+
+            # Draw split-seam headline preview if configured
+            split_text = self.split_headline_var.get().strip()
+            if split_text and n_slices >= 2:
+                headline_font = get_default_font(size=9, bold=True)
+                seam_x = active_x0 + slice_w
+                mid_y = (active_y0 + active_y1) / 2.0
+                pill_w = min(220, int(len(split_text) * 7.0 + 16))
+                draw.rectangle(
+                    [(seam_x - pill_w // 2, mid_y - 10), (seam_x + pill_w // 2, mid_y + 10)],
+                    fill=(0, 0, 0, 195),
+                    outline=(255, 215, 0, 240),
+                    width=1,
+                )
+                draw.text((seam_x, mid_y), f"« {split_text[:20]} »", fill=(255, 235, 90, 255), font=headline_font, anchor="mm")
+
+            # Draw Story Mode tap indicator if enabled
+            if self.story_mode_var.get():
+                story_font = get_default_font(size=8, bold=True)
+                draw.rectangle([(active_x0 + 4, active_y1 - 18), (active_x0 + 95, active_y1 - 4)], fill=(0, 0, 0, 180), outline=(255, 255, 255, 200))
+                draw.text((active_x0 + 49, active_y1 - 11), "Tap next ➔", fill="white", font=story_font, anchor="mm")
 
             res = Image.alpha_composite(thumb, overlay)
             self.preview_ctk_image = ctk.CTkImage(light_image=res, dark_image=res, size=(pw, ph))
@@ -1041,6 +1193,10 @@ class InstaPanoramaSplitter(ctk.CTk):
             swipe_indicator=ind_val,
             title_text=self.title_text_var.get().strip() or None,
             watermark_text=self.watermark_text_var.get().strip() or None,
+            color_filter=self.color_filter_var.get(),
+            include_camera_card=self.camera_card_var.get(),
+            split_headline=self.split_headline_var.get().strip() or None,
+            story_mode=self.story_mode_var.get(),
             format=self.format_var.get(),
             prefix=self.prefix_var.get().strip() or "panorama_slice",
         )

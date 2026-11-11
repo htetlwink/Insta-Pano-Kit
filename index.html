@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>📸 InstaPanoramaSplitter — Pure Web & Mobile Slicer</title>
+    <title>📸 InstaPanoramaSplitter — Pro Web Creator Suite</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- JSZip for client-side zero-server ZIP creation -->
@@ -11,23 +11,28 @@
     <style>
         body { background-color: #0b0f19; color: #f3f4f6; }
         .card { background-color: #131927; border: 1px solid #1f293d; }
+        .grab-cursor { cursor: grab; }
+        .grab-cursor:active { cursor: grabbing; }
+        /* Hide scrollbars for phone carousel */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
-<body class="min-h-screen py-8 px-4 font-sans selection:bg-blue-600 selection:text-white">
+<body class="min-h-screen py-8 px-3 sm:px-4 font-sans selection:bg-blue-600 selection:text-white">
     <div class="max-w-4xl mx-auto space-y-6">
         
-        <!-- Header -->
+        <!-- Header Bar -->
         <header class="text-center space-y-2">
-            <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-white flex items-center justify-center gap-3">
-                📸 InstaPanoramaSplitter
+            <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-white flex items-center justify-center gap-2 sm:gap-3">
+                <span>📸</span> InstaPanoramaSplitter <span class="text-xs font-semibold px-2.5 py-1 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full text-white uppercase tracking-wider">Pro Suite</span>
             </h1>
-            <p class="text-sm sm:text-base text-gray-400">
-                100% In-Browser Instagram Panorama Carousel Slicer. No server uploads, no limits, instant & private.
+            <p class="text-xs sm:text-sm text-gray-400 max-w-xl mx-auto">
+                Interactive Drag-to-Pan, Phone Swipe Mockup, Story Mode, In-Browser Video Panning, and 1-Tap Mobile Instagram Sharing.
             </p>
         </header>
 
-        <!-- Main Form Card -->
-        <div class="card rounded-2xl p-6 sm:p-8 shadow-xl space-y-6">
+        <!-- Main Configuration Card -->
+        <div class="card rounded-2xl p-5 sm:p-8 shadow-xl space-y-6">
             
             <!-- 1. Upload Box -->
             <div>
@@ -37,31 +42,34 @@
                     <div id="uploadPrompt" class="space-y-1">
                         <span class="text-4xl">🌄</span>
                         <p class="text-sm font-medium text-gray-300">Click or Drag & Drop Panorama Here</p>
-                        <p class="text-xs text-gray-500">Works directly in your browser. Photos are processed locally and never uploaded to any server.</p>
+                        <p class="text-xs text-gray-500">100% Private & In-Browser • Zero server limits • Supports JPG, PNG, WEBP</p>
                     </div>
                     <div id="fileInfo" class="hidden text-sm font-semibold text-blue-400"></div>
                 </div>
             </div>
 
-            <!-- 2. Live Interactive Canvas Preview Card -->
+            <!-- 2. Interactive Drag-to-Pan Canvas Preview -->
             <div id="previewCard" class="hidden space-y-4">
-                <div class="flex items-center justify-between">
-                    <span class="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-2">
-                        <span>🎯</span> Live Slicing & Pan Framing Preview
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <span class="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <span>🎯</span> Interactive Drag-to-Pan Preview <span class="text-gray-500 font-normal lowercase">(drag on image to frame)</span>
                     </span>
                     <span id="ratioBadge" class="text-xs font-mono text-blue-400 bg-blue-950/60 px-2.5 py-1 rounded-md border border-blue-800/40"></span>
                 </div>
 
-                <!-- Canvas Display Container -->
-                <div class="relative bg-black rounded-xl overflow-hidden border border-gray-800 flex items-center justify-center p-2 min-h-[160px]">
-                    <canvas id="previewCanvas" class="max-w-full max-h-[320px] rounded shadow-lg"></canvas>
+                <!-- Canvas Display Container with Mouse & Touch Drag -->
+                <div class="relative bg-black rounded-xl overflow-hidden border border-gray-800 flex items-center justify-center p-2 min-h-[180px]">
+                    <canvas id="previewCanvas" class="max-w-full max-h-[340px] rounded shadow-lg grab-cursor touch-none"></canvas>
+                    <div class="absolute bottom-3 right-3 bg-black/75 backdrop-blur text-[10px] text-gray-300 px-2 py-0.5 rounded border border-gray-700 pointer-events-none">
+                        🖐️ Click & Drag to Re-frame
+                    </div>
                 </div>
 
-                <!-- Interactive Pan Sliders (X & Y) -->
+                <!-- Pan Sliders (X & Y) -->
                 <div id="panControls" class="bg-gray-900/70 p-4 rounded-xl border border-gray-800 space-y-3">
                     <div class="flex items-center justify-between">
-                        <span class="text-xs font-bold text-gray-300">Crop Position Framing</span>
-                        <button type="button" onclick="resetPan()" class="text-xs text-blue-400 hover:text-blue-300 font-semibold bg-gray-800 px-2.5 py-1 rounded">
+                        <span class="text-xs font-bold text-gray-300">Crop Position Offsets</span>
+                        <button type="button" onclick="resetPan()" class="text-xs text-blue-400 hover:text-blue-300 font-semibold bg-gray-800 hover:bg-gray-700 px-2.5 py-1 rounded transition">
                             Reset Center (0, 0)
                         </button>
                     </div>
@@ -70,29 +78,29 @@
                         <div>
                             <div class="flex justify-between text-xs text-gray-400 mb-1">
                                 <span>Horizontal Pan (X)</span>
-                                <span id="panXVal" class="font-mono">0%</span>
+                                <span id="panXVal" class="font-mono text-blue-400">0%</span>
                             </div>
-                            <input type="range" id="panX" min="-1" max="1" step="0.02" value="0" oninput="updatePanPreview()" class="w-full accent-blue-500 cursor-pointer">
+                            <input type="range" id="panX" min="-1" max="1" step="0.01" value="0" oninput="onPanSliderChange()" class="w-full accent-blue-500 cursor-pointer">
                         </div>
                         <div>
                             <div class="flex justify-between text-xs text-gray-400 mb-1">
                                 <span>Vertical Pan (Y)</span>
-                                <span id="panYVal" class="font-mono">0%</span>
+                                <span id="panYVal" class="font-mono text-blue-400">0%</span>
                             </div>
-                            <input type="range" id="panY" min="-1" max="1" step="0.02" value="0" oninput="updatePanPreview()" class="w-full accent-blue-500 cursor-pointer">
+                            <input type="range" id="panY" min="-1" max="1" step="0.01" value="0" oninput="onPanSliderChange()" class="w-full accent-blue-500 cursor-pointer">
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- 3. Slicing Settings -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <!-- 3. Slicing & Format Configuration -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <!-- Slices Count -->
                 <div>
                     <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Number of Slices</label>
                     <select id="sliceCount" onchange="updatePanPreview()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
                         <option value="2">2 Slices</option>
-                        <option value="3" selected>3 Slices (Most Popular)</option>
+                        <option value="3" selected>3 Slices (Optimal)</option>
                         <option value="4">4 Slices</option>
                         <option value="5">5 Slices</option>
                         <option value="6">6 Slices</option>
@@ -104,80 +112,186 @@
                 <div>
                     <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Instagram Aspect Ratio</label>
                     <select id="aspectRatio" onchange="updatePanPreview()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
-                        <option value="Portrait (4:5)" selected>Portrait 4:5 (1080×1350 px — Feed Optimal)</option>
+                        <option value="Portrait (4:5)" selected>Portrait 4:5 (1080×1350 px — Feed)</option>
                         <option value="Square (1:1)">Square 1:1 (1080×1080 px — Classic)</option>
-                        <option value="Story (9:16)">Story 9:16 (1080×1920 px — Reels / Stories)</option>
+                        <option value="Story (9:16)">Story 9:16 (1080×1920 px — Reels/Stories)</option>
                     </select>
                 </div>
 
                 <!-- Framing Mode -->
                 <div>
-                    <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Framing & Fill Strategy</label>
+                    <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Framing Mode</label>
                     <select id="fitMode" onchange="updatePanPreview()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
-                        <option value="Standard (Fit & Crop)" selected>Standard 1080px (Fit & Center Crop)</option>
-                        <option value="Proportional (Full Width)">Proportional Full Width (No Crop)</option>
-                        <option value="Blurred Background Fill">Blurred Background Fill (No Cropping)</option>
+                        <option value="Standard (Fit & Crop)" selected>Standard 1080px (Fit & Crop)</option>
+                        <option value="Proportional (Full Width)">Proportional (Full Width)</option>
+                        <option value="Blurred Background Fill">Blurred Background Fill</option>
                         <option value="Solid Gallery Border">Gallery Border (White Frame)</option>
                     </select>
                 </div>
+            </div>
 
-                <!-- Creative Overlay -->
+            <!-- 4. Creative Aesthetics & Visual Hooks -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <!-- Color Grading Preset -->
                 <div>
-                    <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Seamless Engagement Cue</label>
-                    <select id="indicator" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+                    <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">🎨 Aesthetic Color Grading Preset</label>
+                    <select id="colorFilter" onchange="updatePanPreview()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+                        <option value="None" selected>None (Original Colors)</option>
+                        <option value="Cinematic Moody">Cinematic Moody (Teal & Warm Orange)</option>
+                        <option value="Kodak Warmth">Kodak Portra Warmth (Golden Tone)</option>
+                        <option value="Vintage 35mm">Vintage 35mm (Faded Matte Film)</option>
+                        <option value="B&W Contrast">B&W High Contrast (Monochrome)</option>
+                    </select>
+                </div>
+
+                <!-- Engagement Cue -->
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">👉 Seamless Swipe Cue</label>
+                    <select id="indicator" onchange="updatePanPreview()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
                         <option value="None" selected>None</option>
-                        <option value="Seam Arrow">Seam Arrow ➔ (Spans Slices)</option>
+                        <option value="Seam Arrow">Seam Arrow ➔ (Cuts Across Slices)</option>
                         <option value="Swipe Badge">"Swipe Left 👉" Badge (Slide 1)</option>
                         <option value="Dot Indicators">Pagination Dots</option>
                     </select>
                 </div>
             </div>
 
-            <!-- Text Overlays -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <!-- 5. Advanced Typography & Split-Seam Headline -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
                     <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Slide 1 Title (Optional)</label>
-                    <input type="text" id="titleText" placeholder="e.g. Alpine Sunset" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500">
+                    <input type="text" id="titleText" oninput="updatePanPreview()" placeholder="e.g. Alpine Sunset" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">🔤 Split-Seam Headline (Slide 1 & 2)</label>
+                    <input type="text" id="splitHeadline" oninput="updatePanPreview()" placeholder="e.g. PANORAMA" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500">
                 </div>
                 <div>
                     <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Photographer Credit / Handle</label>
-                    <input type="text" id="watermarkText" placeholder="e.g. @your_account" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500">
+                    <input type="text" id="watermarkText" oninput="updatePanPreview()" placeholder="e.g. @username" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500">
                 </div>
             </div>
 
-            <!-- Toggles -->
-            <div class="flex flex-wrap gap-4 text-xs font-medium text-gray-300">
+            <!-- 6. Features Toggles -->
+            <div class="flex flex-wrap items-center gap-5 text-xs font-medium text-gray-300 pt-1">
                 <label class="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" id="guideToggle" checked class="rounded bg-gray-800 border-gray-700 text-blue-500">
-                    Include Numbered Upload Guide Contact Sheet
+                    Numbered Upload Guide (upload_guide.jpg)
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="storyModeToggle" onchange="updatePanPreview()" class="rounded bg-gray-800 border-gray-700 text-blue-500">
+                    Instagram Story Tap-Through Prompts (9:16)
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="cameraCardToggle" class="rounded bg-gray-800 border-gray-700 text-blue-500">
+                    Append Photography Specs Card
                 </label>
             </div>
 
-            <!-- Primary Action Button -->
-            <button type="button" onclick="startClientSlicing()" id="sliceBtn" class="w-full py-4 px-6 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl shadow-lg transition duration-150 flex items-center justify-center gap-2 text-base">
-                <span>✂️ Slice Panorama & Download ZIP (Instant)</span>
-            </button>
-        </div>
-
-        <!-- Result / Gallery Section -->
-        <div id="resultsCard" class="hidden card rounded-2xl p-6 sm:p-8 space-y-6">
-            <div class="flex items-center justify-between">
-                <h2 class="text-xl font-bold text-white flex items-center gap-2">
-                    <span>✅</span> Generated Carousel Slides
-                </h2>
-                <button type="button" onclick="downloadAllZip()" id="zipDownloadBtn" class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm rounded-xl shadow transition flex items-center gap-2">
-                    <span>⬇️</span> Download All as ZIP
+            <!-- 7. Primary Action Buttons (Slicing & In-Browser Video) -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                <button type="button" onclick="startClientSlicing()" id="sliceBtn" class="w-full py-3.5 px-6 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl shadow-lg transition duration-150 flex items-center justify-center gap-2">
+                    <span>✂️ Slice Carousel & Export</span>
+                </button>
+                <button type="button" onclick="recordPanningVideoInBrowser()" id="videoBtn" class="w-full py-3.5 px-6 bg-indigo-700 hover:bg-indigo-600 text-white font-bold rounded-xl shadow-lg transition duration-150 flex items-center justify-center gap-2">
+                    <span>🎬 Render Reels Panning Video (In-Browser)</span>
                 </button>
             </div>
+        </div>
 
-            <!-- Carousel Gallery Container -->
-            <div id="galleryGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4"></div>
+        <!-- 8. Interactive In-Browser Mobile Swipe Mockup Card -->
+        <div id="resultsCard" class="hidden card rounded-2xl p-5 sm:p-8 space-y-6">
+            
+            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-800 pb-4">
+                <div>
+                    <h2 class="text-xl font-bold text-white flex items-center gap-2">
+                        <span>📱</span> Live Carousel Mobile Simulator
+                    </h2>
+                    <p class="text-xs text-gray-400">Swipe or click arrows to test how the carousel slides flow on Instagram.</p>
+                </div>
+
+                <div class="flex items-center gap-2">
+                    <!-- Native Web Share Button (Shown on Mobile) -->
+                    <button type="button" onclick="shareDirectlyToMobile()" id="nativeShareBtn" class="hidden px-4 py-2 bg-gradient-to-r from-pink-600 to-purple-600 hover:opacity-90 text-white font-bold text-xs rounded-xl shadow flex items-center gap-1.5 transition">
+                        <span>📲</span> Share to Instagram / Photos
+                    </button>
+                    <!-- ZIP Download Button -->
+                    <button type="button" onclick="downloadAllZip()" id="zipDownloadBtn" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow flex items-center gap-1.5 transition">
+                        <span>⬇️</span> Download All (.zip)
+                    </button>
+                </div>
+            </div>
+
+            <!-- Mobile Phone Mockup Frame -->
+            <div class="max-w-[360px] mx-auto bg-gray-950 border-4 border-gray-800 rounded-[36px] p-3 shadow-2xl space-y-3">
+                <!-- Phone Speaker / Notch -->
+                <div class="w-20 h-3.5 bg-gray-800 rounded-full mx-auto"></div>
+
+                <!-- Instagram Post Header -->
+                <div class="flex items-center justify-between px-2 pt-1 text-xs">
+                    <div class="flex items-center gap-2">
+                        <div class="w-7 h-7 rounded-full bg-gradient-to-tr from-yellow-400 via-pink-600 to-purple-600 p-[2px]">
+                            <div class="w-full h-full bg-black rounded-full flex items-center justify-center text-[10px]">📷</div>
+                        </div>
+                        <div>
+                            <span id="mockupUsername" class="font-bold text-white block leading-none">your_panorama</span>
+                            <span class="text-[9px] text-gray-500 leading-none">Seamless Panorama</span>
+                        </div>
+                    </div>
+                    <span class="text-gray-400 font-bold">•••</span>
+                </div>
+
+                <!-- Interactive Swipe Carousel Area -->
+                <div class="relative overflow-hidden rounded-xl bg-black aspect-[4/5] flex items-center justify-center group">
+                    <div id="mockupCarousel" class="flex w-full h-full overflow-x-auto snap-x snap-mandatory no-scrollbar scroll-smooth"></div>
+
+                    <!-- Slide Counter Overlay -->
+                    <div id="mockupCounter" class="absolute top-2.5 right-2.5 bg-black/70 text-white text-[10px] font-bold px-2 py-0.5 rounded-full backdrop-blur pointer-events-none">
+                        1/3
+                    </div>
+
+                    <!-- Left / Right Navigation Buttons -->
+                    <button type="button" onclick="scrollMockup(-1)" class="absolute left-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-black/60 hover:bg-black/90 text-white text-xs flex items-center justify-center backdrop-blur">
+                        ‹
+                    </button>
+                    <button type="button" onclick="scrollMockup(1)" class="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-black/60 hover:bg-black/90 text-white text-xs flex items-center justify-center backdrop-blur">
+                        ›
+                    </button>
+                </div>
+
+                <!-- Instagram Action Bar -->
+                <div class="flex items-center justify-between px-2 text-sm text-gray-300">
+                    <div class="flex items-center gap-3">
+                        <span>❤️</span>
+                        <span>💬</span>
+                        <span>✈️</span>
+                    </div>
+                    <!-- Pagination Dots -->
+                    <div id="mockupDots" class="flex items-center gap-1"></div>
+                    <span>🔖</span>
+                </div>
+
+                <!-- Likes & Caption -->
+                <div class="px-2 text-[11px] space-y-1 pb-1">
+                    <p class="font-bold text-white">Liked by photography.daily and others</p>
+                    <p class="text-gray-300 text-[10px]"><span id="mockupCaptionUser" class="font-bold text-white">your_panorama</span> Swipe left to explore the full panoramic view! 👉</p>
+                </div>
+            </div>
+
+            <!-- Individual Slice Cards -->
+            <div class="pt-4 border-t border-gray-800 space-y-3">
+                <h3 class="text-sm font-bold text-gray-300">Individual Slide Downloads</h3>
+                <div id="galleryGrid" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></div>
+            </div>
         </div>
     </div>
 
     <script>
         let loadedImage = null;
-        let generatedBlobs = []; // [{filename, blob, url, index}]
+        let generatedBlobs = [];
+        let isDragging = false;
+        let dragStartX = 0, dragStartY = 0;
+        let startPanX = 0, startPanY = 0;
 
         function handleFileSelect(event) {
             const file = event.target.files[0];
@@ -193,6 +307,7 @@
                 loadedImage = new Image();
                 loadedImage.onload = function() {
                     document.getElementById('previewCard').classList.remove('hidden');
+                    setupCanvasGestures();
                     updatePanPreview();
                 };
                 loadedImage.src = e.target.result;
@@ -200,20 +315,63 @@
             reader.readAsDataURL(file);
         }
 
-        // Drag and drop setup
+        // Drag & Drop onto dropzone
         const dropZone = document.getElementById('dropZone');
-        ['dragenter', 'dragover'].forEach(name => {
-            dropZone.addEventListener(name, (e) => { e.preventDefault(); dropZone.classList.add('border-blue-500'); });
-        });
-        ['dragleave', 'drop'].forEach(name => {
-            dropZone.addEventListener(name, (e) => { e.preventDefault(); dropZone.classList.remove('border-blue-500'); });
-        });
-        dropZone.addEventListener('drop', (e) => {
+        ['dragenter', 'dragover'].forEach(n => dropZone.addEventListener(n, e => { e.preventDefault(); dropZone.classList.add('border-blue-500'); }));
+        ['dragleave', 'drop'].forEach(n => dropZone.addEventListener(n, e => { e.preventDefault(); dropZone.classList.remove('border-blue-500'); }));
+        dropZone.addEventListener('drop', e => {
             if (e.dataTransfer.files.length) {
                 document.getElementById('fileInput').files = e.dataTransfer.files;
                 handleFileSelect({ target: { files: e.dataTransfer.files } });
             }
         });
+
+        // -------------------------------------------------------------
+        // Direct Touch & Mouse Drag-to-Pan on Canvas
+        // -------------------------------------------------------------
+        function setupCanvasGestures() {
+            const canvas = document.getElementById('previewCanvas');
+            if (canvas._gesturesBound) return;
+            canvas._gesturesBound = true;
+
+            function onPointerDown(e) {
+                isDragging = true;
+                const pt = e.touches ? e.touches[0] : e;
+                dragStartX = pt.clientX;
+                dragStartY = pt.clientY;
+                startPanX = parseFloat(document.getElementById('panX').value) || 0;
+                startPanY = parseFloat(document.getElementById('panY').value) || 0;
+            }
+
+            function onPointerMove(e) {
+                if (!isDragging) return;
+                const pt = e.touches ? e.touches[0] : e;
+                const dx = pt.clientX - dragStartX;
+                const dy = pt.clientY - dragStartY;
+
+                // Scale movement sensitivity relative to canvas size
+                const sensX = 2.0 / (canvas.width || 400);
+                const sensY = 2.0 / (canvas.height || 200);
+
+                // Moving pointer right shifts crop window left (-), and vice versa
+                let newPanX = Math.max(-1, Math.min(1, startPanX - dx * sensX));
+                let newPanY = Math.max(-1, Math.min(1, startPanY - dy * sensY));
+
+                document.getElementById('panX').value = newPanX;
+                document.getElementById('panY').value = newPanY;
+                updatePanPreview();
+            }
+
+            function onPointerUp() { isDragging = false; }
+
+            canvas.addEventListener('mousedown', onPointerDown);
+            window.addEventListener('mousemove', onPointerMove);
+            window.addEventListener('mouseup', onPointerUp);
+
+            canvas.addEventListener('touchstart', onPointerDown, { passive: true });
+            window.addEventListener('touchmove', onPointerMove, { passive: true });
+            window.addEventListener('touchend', onPointerUp);
+        }
 
         function resetPan() {
             document.getElementById('panX').value = 0;
@@ -221,11 +379,30 @@
             updatePanPreview();
         }
 
+        function onPanSliderChange() {
+            updatePanPreview();
+        }
+
         function getTargetDimensions() {
             const aspectVal = document.getElementById('aspectRatio').value;
             if (aspectVal.includes('1:1')) return { targetW: 1080, targetH: 1080 };
             if (aspectVal.includes('9:16')) return { targetW: 1080, targetH: 1920 };
-            return { targetW: 1080, targetH: 1350 }; // 4:5 default
+            return { targetW: 1080, targetH: 1350 };
+        }
+
+        // Apply Color Grading Filters to Canvas Context
+        function applyCanvasColorFilter(ctx, filterName) {
+            if (filterName === 'Cinematic Moody') {
+                ctx.filter = 'contrast(120%) saturate(85%) hue-rotate(-10deg) brightness(96%)';
+            } else if (filterName === 'Kodak Warmth') {
+                ctx.filter = 'sepia(25%) saturate(125%) contrast(108%) brightness(102%)';
+            } else if (filterName === 'Vintage 35mm') {
+                ctx.filter = 'sepia(35%) contrast(92%) brightness(105%) saturate(88%)';
+            } else if (filterName === 'B&W Contrast') {
+                ctx.filter = 'grayscale(100%) contrast(145%) brightness(95%)';
+            } else {
+                ctx.filter = 'none';
+            }
         }
 
         function updatePanPreview() {
@@ -236,8 +413,11 @@
 
             const nSlices = parseInt(document.getElementById('sliceCount').value) || 3;
             const fitMode = document.getElementById('fitMode').value;
+            const filterName = document.getElementById('colorFilter').value;
             const panX = parseFloat(document.getElementById('panX').value) || 0;
             const panY = parseFloat(document.getElementById('panY').value) || 0;
+            const splitHeadline = document.getElementById('splitHeadline').value.trim();
+            const isStoryMode = document.getElementById('storyModeToggle').checked;
 
             document.getElementById('panXVal').textContent = `${Math.round(panX * 100)}%`;
             document.getElementById('panYVal').textContent = `${Math.round(panY * 100)}%`;
@@ -250,9 +430,9 @@
             const origRatio = origW / origH;
 
             document.getElementById('ratioBadge').textContent = 
-                `${origW}×${origH} px (${origRatio.toFixed(2)}:1) ➔ ${nSlices} Slices @ ${targetW}×${targetH}`;
+                `${origW}×${origH} px ➔ ${nSlices} Slices @ ${targetW}×${targetH} px`;
 
-            const maxDisplayW = Math.min(760, window.innerWidth - 60);
+            const maxDisplayW = Math.min(760, window.innerWidth - 48);
             const scale = maxDisplayW / origW;
             const cw = Math.max(20, Math.round(origW * scale));
             const ch = Math.max(20, Math.round(origH * scale));
@@ -260,7 +440,10 @@
             canvas.width = cw;
             canvas.height = ch;
 
+            // Apply selected aesthetic filter
+            applyCanvasColorFilter(ctx, filterName);
             ctx.drawImage(loadedImage, 0, 0, cw, ch);
+            ctx.filter = 'none'; // reset filter for overlays
 
             let activeX0 = 0, activeX1 = cw, activeY0 = 0, activeY1 = ch;
 
@@ -294,6 +477,7 @@
             const activeSpanW = activeX1 - activeX0;
             const sliceSpanW = activeSpanW / nSlices;
 
+            // Draw divider lines and numbered slice badges
             for (let i = 0; i < nSlices; i++) {
                 const x0 = activeX0 + i * sliceSpanW;
                 const x1 = activeX0 + (i + 1) * sliceSpanW;
@@ -307,6 +491,7 @@
                     ctx.stroke();
                 }
 
+                // Number badge
                 const cx = (x0 + x1) / 2;
                 const cy = activeY0 + 16;
                 if (cy + 12 < activeY1) {
@@ -324,6 +509,27 @@
                     ctx.textBaseline = 'middle';
                     ctx.fillText((i + 1).toString(), cx, cy);
                 }
+
+                // Story Mode Progress Bars preview
+                if (isStoryMode && activeY0 + 8 < activeY1) {
+                    const segW = sliceSpanW - 12;
+                    ctx.fillStyle = (i === 0) ? '#ffffff' : 'rgba(255, 255, 255, 0.4)';
+                    ctx.fillRect(x0 + 6, activeY0 + 5, segW, 2.5);
+                }
+            }
+
+            // Split Headline Preview across Slide 1 & 2
+            if (splitHeadline && nSlices >= 2) {
+                const seamX = activeX0 + sliceSpanW;
+                const textY = activeY0 + (activeY1 - activeY0) * 0.45;
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 18px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+                ctx.shadowBlur = 6;
+                ctx.fillText(splitHeadline.toUpperCase(), seamX, textY);
+                ctx.shadowBlur = 0;
             }
 
             ctx.strokeStyle = '#00ebff';
@@ -332,27 +538,31 @@
         }
 
         // -------------------------------------------------------------
-        // Client-side HTML5 Canvas Slicing Engine (100% in Browser)
+        // Client-side Canvas Slicing Engine
         // -------------------------------------------------------------
         async function startClientSlicing() {
             if (!loadedImage) {
-                alert('Please select an image first.');
+                alert('Please select a panorama image first.');
                 return;
             }
 
             const btn = document.getElementById('sliceBtn');
             btn.disabled = true;
-            btn.innerHTML = `<span class="animate-spin inline-block mr-2">⏳</span> Slicing in Browser (0 MB server data)...`;
+            btn.innerHTML = `<span class="animate-spin inline-block mr-2">⏳</span> Generating Carousel in Browser...`;
 
             try {
                 const nSlices = parseInt(document.getElementById('sliceCount').value) || 3;
                 const fitMode = document.getElementById('fitMode').value;
+                const filterName = document.getElementById('colorFilter').value;
                 const indicator = document.getElementById('indicator').value;
                 const panX = parseFloat(document.getElementById('panX').value) || 0;
                 const panY = parseFloat(document.getElementById('panY').value) || 0;
                 const titleText = document.getElementById('titleText').value.trim();
+                const splitHeadline = document.getElementById('splitHeadline').value.trim();
                 const watermarkText = document.getElementById('watermarkText').value.trim();
                 const includeGuide = document.getElementById('guideToggle').checked;
+                const isStoryMode = document.getElementById('storyModeToggle').checked;
+                const includeCameraCard = document.getElementById('cameraCardToggle').checked;
 
                 const { targetW, targetH } = getTargetDimensions();
                 const totalTargetW = targetW * nSlices;
@@ -366,8 +576,10 @@
                 fullCanvas.height = targetH;
                 const fCtx = fullCanvas.getContext('2d');
 
+                // Apply Color Filter
+                applyCanvasColorFilter(fCtx, filterName);
+
                 if (fitMode.includes('Standard')) {
-                    // Standard Fit & Crop
                     const scale = Math.max(totalTargetW / origW, targetH / origH);
                     const cropRegionW = totalTargetW / scale;
                     const cropRegionH = targetH / scale;
@@ -380,62 +592,67 @@
 
                     fCtx.drawImage(loadedImage, sx, sy, cropRegionW, cropRegionH, 0, 0, totalTargetW, targetH);
                 } else if (fitMode.includes('Blurred')) {
-                    // Blurred background fill
-                    // Draw blurred backdrop first
-                    fCtx.filter = 'blur(30px)';
+                    fCtx.filter = 'blur(28px)';
                     fCtx.drawImage(loadedImage, 0, 0, totalTargetW, targetH);
                     fCtx.filter = 'none';
 
-                    // Dim overlay
-                    fCtx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+                    fCtx.fillStyle = 'rgba(0, 0, 0, 0.35)';
                     fCtx.fillRect(0, 0, totalTargetW, targetH);
 
-                    // Fit foreground without cropping
                     const scale = Math.min(totalTargetW / origW, targetH / origH);
                     const fgW = Math.round(origW * scale);
                     const fgH = Math.round(origH * scale);
-                    const fx = Math.round((totalTargetW - fgW) / 2);
-                    const fy = Math.round((targetH - fgH) / 2);
-                    fCtx.drawImage(loadedImage, fx, fy, fgW, fgH);
+                    fCtx.drawImage(loadedImage, Math.round((totalTargetW - fgW) / 2), Math.round((targetH - fgH) / 2), fgW, fgH);
                 } else if (fitMode.includes('Solid')) {
-                    // White border frame
                     fCtx.fillStyle = '#ffffff';
                     fCtx.fillRect(0, 0, totalTargetW, targetH);
                     const scale = Math.min((totalTargetW - 40) / origW, (targetH - 40) / origH);
                     const fgW = Math.round(origW * scale);
                     const fgH = Math.round(origH * scale);
-                    const fx = Math.round((totalTargetW - fgW) / 2);
-                    const fy = Math.round((targetH - fgH) / 2);
-                    fCtx.drawImage(loadedImage, fx, fy, fgW, fgH);
+                    fCtx.drawImage(loadedImage, Math.round((totalTargetW - fgW) / 2), Math.round((targetH - fgH) / 2), fgW, fgH);
                 } else {
-                    // Proportional
                     fCtx.drawImage(loadedImage, 0, 0, totalTargetW, targetH);
                 }
 
-                // Draw seam arrows across cut boundaries before slicing
+                fCtx.filter = 'none'; // reset filter for graphics
+
+                // Draw Split-Seam Headline across Slide 1 & 2
+                if (splitHeadline && nSlices >= 2) {
+                    const seamX = targetW;
+                    const textY = targetH * 0.45;
+                    fCtx.fillStyle = '#ffffff';
+                    fCtx.font = '900 64px sans-serif';
+                    fCtx.textAlign = 'center';
+                    fCtx.textBaseline = 'middle';
+                    fCtx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+                    fCtx.shadowBlur = 12;
+                    fCtx.fillText(splitHeadline.toUpperCase(), seamX, textY);
+                    fCtx.shadowBlur = 0;
+                }
+
+                // Draw Seam Arrows
                 if (indicator === 'Seam Arrow') {
                     for (let i = 1; i < nSlices; i++) {
                         const seamX = i * targetW;
                         const seamY = targetH * 0.5;
 
-                        // Pill badge centered exactly on seamX
-                        fCtx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+                        fCtx.fillStyle = 'rgba(15, 23, 42, 0.88)';
                         fCtx.beginPath();
-                        fCtx.roundRect(seamX - 35, seamY - 18, 70, 36, 18);
+                        fCtx.roundRect(seamX - 44, seamY - 22, 88, 44, 22);
                         fCtx.fill();
-                        fCtx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-                        fCtx.lineWidth = 1.5;
+                        fCtx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+                        fCtx.lineWidth = 2;
                         fCtx.stroke();
 
                         fCtx.fillStyle = '#ffffff';
-                        fCtx.font = 'bold 16px sans-serif';
+                        fCtx.font = 'bold 20px sans-serif';
                         fCtx.textAlign = 'center';
                         fCtx.textBaseline = 'middle';
                         fCtx.fillText('➔', seamX, seamY);
                     }
                 }
 
-                // 2. Slice into individual canvases
+                // 2. Extract Individual Slices
                 generatedBlobs = [];
                 for (let i = 0; i < nSlices; i++) {
                     const sliceCanvas = document.createElement('canvas');
@@ -445,56 +662,73 @@
 
                     sCtx.drawImage(fullCanvas, i * targetW, 0, targetW, targetH, 0, 0, targetW, targetH);
 
-                    // Slide 1 Title Overlay
+                    // Slide 1 Cover Title
                     if (i === 0 && titleText) {
-                        sCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-                        sCtx.fillRect(40, 50, targetW - 80, 70);
+                        sCtx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+                        sCtx.roundRect(40, 50, targetW - 80, 80, 12);
+                        sCtx.fill();
                         sCtx.fillStyle = '#ffffff';
-                        sCtx.font = 'bold 28px sans-serif';
+                        sCtx.font = 'bold 32px sans-serif';
                         sCtx.textAlign = 'left';
                         sCtx.textBaseline = 'middle';
-                        sCtx.fillText(titleText, 60, 85);
+                        sCtx.fillText(titleText, 64, 90);
                     }
 
                     // Watermark / Author Handle
                     if (watermarkText) {
                         sCtx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-                        sCtx.font = 'bold 20px sans-serif';
+                        sCtx.font = 'bold 22px sans-serif';
                         sCtx.textAlign = 'right';
                         sCtx.textBaseline = 'bottom';
-                        sCtx.shadowColor = 'rgba(0, 0, 0, 0.8)';
-                        sCtx.shadowBlur = 4;
-                        sCtx.fillText(watermarkText, targetW - 30, targetH - 30);
+                        sCtx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+                        sCtx.shadowBlur = 6;
+                        sCtx.fillText(watermarkText, targetW - 32, targetH - 32);
                         sCtx.shadowBlur = 0;
                     }
 
                     // Slide 1 Swipe Badge
                     if (i === 0 && indicator === 'Swipe Badge') {
-                        sCtx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+                        sCtx.fillStyle = 'rgba(15, 23, 42, 0.88)';
                         sCtx.beginPath();
-                        sCtx.roundRect(targetW - 160, targetH * 0.5 - 20, 140, 40, 20);
+                        sCtx.roundRect(targetW - 170, targetH * 0.5 - 24, 150, 48, 24);
                         sCtx.fill();
-                        sCtx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-                        sCtx.lineWidth = 1.5;
+                        sCtx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+                        sCtx.lineWidth = 2;
                         sCtx.stroke();
 
                         sCtx.fillStyle = '#ffffff';
-                        sCtx.font = 'bold 14px sans-serif';
+                        sCtx.font = 'bold 16px sans-serif';
                         sCtx.textAlign = 'center';
                         sCtx.textBaseline = 'middle';
-                        sCtx.fillText('SWIPE ➔', targetW - 90, targetH * 0.5);
+                        sCtx.fillText('SWIPE ➔', targetW - 95, targetH * 0.5);
                     }
 
-                    // Pagination dots
+                    // Pagination Dots
                     if (indicator === 'Dot Indicators') {
-                        const dotY = targetH - 40;
-                        const spacing = 18;
+                        const dotY = targetH - 45;
+                        const spacing = 22;
                         const startX = targetW / 2 - ((nSlices - 1) * spacing) / 2;
                         for (let d = 0; d < nSlices; d++) {
                             sCtx.fillStyle = (d === i) ? '#2563eb' : 'rgba(255, 255, 255, 0.5)';
                             sCtx.beginPath();
-                            sCtx.arc(startX + d * spacing, dotY, (d === i) ? 5 : 3.5, 0, 2 * Math.PI);
+                            sCtx.arc(startX + d * spacing, dotY, (d === i) ? 6 : 4, 0, 2 * Math.PI);
                             sCtx.fill();
+                        }
+                    }
+
+                    // Story Mode Indicators (Progress Bars + Tap ➔)
+                    if (isStoryMode) {
+                        const segW = (targetW - 40 - (nSlices - 1) * 8) / nSlices;
+                        for (let s = 0; s < nSlices; s++) {
+                            sCtx.fillStyle = (s <= i) ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255, 255, 255, 0.35)';
+                            sCtx.roundRect(20 + s * (segW + 8), 24, segW, 4, 2);
+                            sCtx.fill();
+                        }
+                        if (i < nSlices - 1) {
+                            sCtx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+                            sCtx.font = 'bold 18px sans-serif';
+                            sCtx.textAlign = 'right';
+                            sCtx.fillText('Tap to explore ➔', targetW - 24, targetH * 0.5);
                         }
                     }
 
@@ -508,19 +742,83 @@
                     });
                 }
 
-                // 3. Optional Numbered Upload Guide Contact Sheet
+                // 3. Optional Photography Metadata Card (Final Slide)
+                if (includeCameraCard) {
+                    const cardCanvas = document.createElement('canvas');
+                    cardCanvas.width = targetW;
+                    cardCanvas.height = targetH;
+                    const cCtx = cardCanvas.getContext('2d');
+
+                    cCtx.fillStyle = '#0b0f19';
+                    cCtx.fillRect(0, 0, targetW, targetH);
+
+                    // Aesthetic Card Frame
+                    cCtx.strokeStyle = '#1e293b';
+                    cCtx.lineWidth = 3;
+                    cCtx.roundRect(60, 80, targetW - 120, targetH - 160, 24);
+                    cCtx.stroke();
+
+                    cCtx.fillStyle = '#ffffff';
+                    cCtx.font = 'bold 36px sans-serif';
+                    cCtx.textAlign = 'center';
+                    cCtx.fillText('📷 Photography Specifications', targetW / 2, 160);
+
+                    cCtx.fillStyle = '#38bdf8';
+                    cCtx.font = '24px sans-serif';
+                    cCtx.fillText(titleText || 'Panoramic Capture', targetW / 2, 220);
+
+                    const specs = [
+                        ['Panorama Dimensions', `${origW} × ${origH} px`],
+                        ['Aspect Ratio', `${(origW/origH).toFixed(2)}:1 Panoramic`],
+                        ['Carousel Slices', `${nSlices} Slides (${targetW}×${targetH} px)`],
+                        ['Color Profile', 'sRGB IEC61966-2.1 (Calibrated)'],
+                        ['Aesthetic Filter', filterName],
+                        ['Author / Credit', watermarkText || '@photographer'],
+                    ];
+
+                    let specY = 320;
+                    specs.forEach(([label, val]) => {
+                        cCtx.fillStyle = '#94a3b8';
+                        cCtx.font = 'bold 20px sans-serif';
+                        cCtx.textAlign = 'left';
+                        cCtx.fillText(label, 100, specY);
+
+                        cCtx.fillStyle = '#ffffff';
+                        cCtx.font = '20px monospace';
+                        cCtx.textAlign = 'right';
+                        cCtx.fillText(val, targetW - 100, specY);
+
+                        cCtx.strokeStyle = '#1e293b';
+                        cCtx.lineWidth = 1;
+                        cCtx.beginPath();
+                        cCtx.moveTo(100, specY + 16);
+                        cCtx.lineTo(targetW - 100, specY + 16);
+                        cCtx.stroke();
+
+                        specY += 65;
+                    });
+
+                    const cardBlob = await new Promise(resolve => cardCanvas.toBlob(resolve, 'image/jpeg', 0.95));
+                    generatedBlobs.push({
+                        index: 'Specs',
+                        filename: 'photography_specs.jpg',
+                        blob: cardBlob,
+                        url: URL.createObjectURL(cardBlob),
+                    });
+                }
+
+                // 4. Optional Upload Guide Contact Sheet
                 if (includeGuide) {
                     const guideCanvas = document.createElement('canvas');
                     guideCanvas.width = 1200;
                     guideCanvas.height = 700;
                     const gCtx = guideCanvas.getContext('2d');
 
-                    gCtx.fillStyle = '#0f172a';
+                    gCtx.fillStyle = '#0b0f19';
                     gCtx.fillRect(0, 0, 1200, 700);
 
-                    // Guide Header
                     gCtx.fillStyle = '#ffffff';
-                    gCtx.font = 'bold 28px sans-serif';
+                    gCtx.font = 'bold 30px sans-serif';
                     gCtx.textAlign = 'center';
                     gCtx.fillText('📸 Instagram Carousel Upload Sequence Guide', 600, 50);
 
@@ -528,7 +826,6 @@
                     gCtx.font = '16px sans-serif';
                     gCtx.fillText('Upload each slide in the exact order shown below to create a seamless panoramic swipe post.', 600, 85);
 
-                    // Render mini thumbnails
                     const cardW = Math.min(180, Math.floor(1000 / nSlices));
                     const cardH = Math.round(cardW * (targetH / targetW));
                     const totalCardsW = nSlices * cardW + (nSlices - 1) * 30;
@@ -537,17 +834,13 @@
 
                     for (let i = 0; i < nSlices; i++) {
                         const cx = startX + i * (cardW + 30);
-
-                        // Card frame
                         gCtx.fillStyle = '#1e293b';
                         gCtx.strokeStyle = '#38bdf8';
                         gCtx.lineWidth = 2;
                         gCtx.strokeRect(cx, cardY, cardW, cardH);
 
-                        // Thumbnail image
                         gCtx.drawImage(fullCanvas, i * targetW, 0, targetW, targetH, cx, cardY, cardW, cardH);
 
-                        // Number badge
                         gCtx.fillStyle = '#2563eb';
                         gCtx.beginPath();
                         gCtx.arc(cx + 20, cardY + 20, 14, 0, 2 * Math.PI);
@@ -558,7 +851,6 @@
                         gCtx.textBaseline = 'middle';
                         gCtx.fillText((i + 1).toString(), cx + 20, cardY + 20);
 
-                        // Sequence arrow between cards
                         if (i < nSlices - 1) {
                             gCtx.fillStyle = '#38bdf8';
                             gCtx.font = 'bold 24px sans-serif';
@@ -568,7 +860,6 @@
                         }
                     }
 
-                    // Posting tips footer
                     gCtx.fillStyle = '#38bdf8';
                     gCtx.font = 'bold 16px sans-serif';
                     gCtx.textAlign = 'center';
@@ -584,25 +875,62 @@
                 }
 
                 displayClientResults();
-                // Trigger auto download of ZIP
-                downloadAllZip();
+                setupNativeWebShare();
 
             } catch (err) {
                 alert('Slicing error: ' + err.message);
             } finally {
                 btn.disabled = false;
-                btn.innerHTML = `<span>✂️ Slice Panorama & Download ZIP (Instant)</span>`;
+                btn.innerHTML = `<span>✂️ Slice Carousel & Export</span>`;
             }
         }
 
+        // -------------------------------------------------------------
+        // Display Mockup & Results
+        // -------------------------------------------------------------
         function displayClientResults() {
             const resultsCard = document.getElementById('resultsCard');
+            const mockupCarousel = document.getElementById('mockupCarousel');
+            const mockupDots = document.getElementById('mockupDots');
             const gallery = document.getElementById('galleryGrid');
 
+            mockupCarousel.innerHTML = '';
+            mockupDots.innerHTML = '';
             gallery.innerHTML = '';
             resultsCard.classList.remove('hidden');
 
-            generatedBlobs.forEach((item) => {
+            const username = document.getElementById('watermarkText').value.trim() || 'your_panorama';
+            document.getElementById('mockupUsername').textContent = username;
+            document.getElementById('mockupCaptionUser').textContent = username;
+
+            const sliceOnlyBlobs = generatedBlobs.filter(b => typeof b.index === 'number');
+
+            sliceOnlyBlobs.forEach((item, idx) => {
+                // Mockup Slide
+                const slideDiv = document.createElement('div');
+                slideDiv.className = 'w-full h-full flex-shrink-0 snap-center flex items-center justify-center bg-black';
+                slideDiv.innerHTML = `<img src="${item.url}" class="w-full h-full object-cover">`;
+                mockupCarousel.appendChild(slideDiv);
+
+                // Mockup Dot
+                const dot = document.createElement('div');
+                dot.className = `w-1.5 h-1.5 rounded-full transition-all ${idx === 0 ? 'bg-blue-500 w-2.5' : 'bg-gray-600'}`;
+                dot.id = `mockupDot_${idx}`;
+                mockupDots.appendChild(dot);
+            });
+
+            // Update mockup counter on scroll
+            mockupCarousel.onscroll = () => {
+                const curIdx = Math.round(mockupCarousel.scrollLeft / mockupCarousel.clientWidth);
+                document.getElementById('mockupCounter').textContent = `${curIdx + 1}/${sliceOnlyBlobs.length}`;
+                sliceOnlyBlobs.forEach((_, i) => {
+                    const d = document.getElementById(`mockupDot_${i}`);
+                    if (d) d.className = `w-1.5 h-1.5 rounded-full transition-all ${i === curIdx ? 'bg-blue-500 w-2.5' : 'bg-gray-600'}`;
+                });
+            };
+
+            // Individual cards
+            generatedBlobs.forEach(item => {
                 const card = document.createElement('div');
                 card.className = 'card rounded-xl p-2 space-y-2 border border-gray-700/60';
                 card.innerHTML = `
@@ -613,7 +941,7 @@
                         </span>
                     </div>
                     <div class="flex items-center justify-between text-xs px-1">
-                        <span class="text-gray-400 font-mono truncate max-w-[110px]">${item.filename}</span>
+                        <span class="text-gray-400 font-mono truncate max-w-[100px]">${item.filename}</span>
                         <a href="${item.url}" download="${item.filename}" class="text-blue-400 hover:text-blue-300 font-semibold">Save</a>
                     </div>
                 `;
@@ -623,23 +951,144 @@
             resultsCard.scrollIntoView({ behavior: 'smooth' });
         }
 
+        function scrollMockup(dir) {
+            const carousel = document.getElementById('mockupCarousel');
+            carousel.scrollBy({ left: dir * carousel.clientWidth, behavior: 'smooth' });
+        }
+
+        // -------------------------------------------------------------
+        // Native Mobile Web Share API (`navigator.share`)
+        // -------------------------------------------------------------
+        function setupNativeWebShare() {
+            const shareBtn = document.getElementById('nativeShareBtn');
+            if (navigator.canShare) {
+                shareBtn.classList.remove('hidden');
+            }
+        }
+
+        async function shareDirectlyToMobile() {
+            if (!navigator.share || !generatedBlobs.length) return;
+            try {
+                const files = generatedBlobs
+                    .filter(b => typeof b.index === 'number')
+                    .map(b => new File([b.blob], b.filename, { type: 'image/jpeg' }));
+
+                await navigator.share({
+                    title: 'Instagram Panorama Carousel',
+                    text: 'Sliced with InstaPanoramaSplitter',
+                    files: files,
+                });
+            } catch (err) {
+                if (err.name !== 'AbortError') {
+                    alert('Share cancelled or not supported on this browser.');
+                }
+            }
+        }
+
+        // -------------------------------------------------------------
+        // ZIP Download
+        // -------------------------------------------------------------
         async function downloadAllZip() {
             if (!generatedBlobs.length) return;
-
             const zip = new JSZip();
-            generatedBlobs.forEach(item => {
-                zip.file(item.filename, item.blob);
-            });
+            generatedBlobs.forEach(item => zip.file(item.filename, item.blob));
 
             const zipBlob = await zip.generateAsync({ type: 'blob' });
-            const zipUrl = URL.createObjectURL(zipBlob);
-
             const a = document.createElement('a');
-            a.href = zipUrl;
+            a.href = URL.createObjectURL(zipBlob);
             a.download = 'instagram_carousel_slices.zip';
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
+        }
+
+        // -------------------------------------------------------------
+        // In-Browser Animated Panning Video Recording (`MediaRecorder`)
+        // -------------------------------------------------------------
+        async function recordPanningVideoInBrowser() {
+            if (!loadedImage) {
+                alert('Please choose a panoramic photo first.');
+                return;
+            }
+
+            const videoBtn = document.getElementById('videoBtn');
+            videoBtn.disabled = true;
+            videoBtn.innerHTML = `<span class="animate-spin inline-block mr-2">⏳</span> Recording Panning Video...`;
+
+            try {
+                const targetW = 720;
+                const targetH = 1280; // 9:16 vertical Reels format
+                const origW = loadedImage.naturalWidth;
+                const origH = loadedImage.naturalHeight;
+
+                const vCanvas = document.createElement('canvas');
+                vCanvas.width = targetW;
+                vCanvas.height = targetH;
+                const vCtx = vCanvas.getContext('2d');
+
+                const stream = vCanvas.captureStream(30); // 30 fps
+                let mimeType = 'video/webm';
+                if (MediaRecorder.isTypeSupported('video/mp4; codecs=avc1')) {
+                    mimeType = 'video/mp4; codecs=avc1';
+                }
+
+                const recorder = new MediaRecorder(stream, { mimeType: mimeType, videoBitsPerSecond: 3500000 });
+                const chunks = [];
+                recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+
+                const recordPromise = new Promise(resolve => {
+                    recorder.onstop = () => {
+                        const blob = new Blob(chunks, { type: mimeType });
+                        const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+                        const a = document.createElement('a');
+                        a.href = URL.createObjectURL(blob);
+                        a.download = `panorama_reels_pan.${ext}`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        resolve();
+                    };
+                });
+
+                recorder.start();
+
+                // 7.0 seconds smooth panning animation
+                const durationMs = 7000;
+                const startTime = performance.now();
+                const scale = targetH / origH;
+                const scaledW = origW * scale;
+                const maxPanX = Math.max(0, scaledW - targetW);
+
+                await new Promise(animResolve => {
+                    function renderFrame(now) {
+                        const elapsed = now - startTime;
+                        const t = Math.min(1.0, elapsed / durationMs);
+
+                        // Smooth ease-in-out curve
+                        const easeT = 0.5 - 0.5 * Math.cos(t * Math.PI);
+                        const curX = maxPanX * easeT;
+
+                        vCtx.drawImage(loadedImage, 0, 0, origW, origH, -curX, 0, scaledW, targetH);
+
+                        if (t < 1.0) {
+                            requestAnimationFrame(renderFrame);
+                        } else {
+                            animResolve();
+                        }
+                    }
+                    requestAnimationFrame(renderFrame);
+                });
+
+                recorder.stop();
+                await recordPromise;
+                alert('🎬 Panning video generated and downloaded successfully!');
+
+            } catch (err) {
+                alert('Video recording error: ' + err.message);
+            } finally {
+                videoBtn.disabled = false;
+                videoBtn.innerHTML = `<span>🎬 Render Reels Panning Video (In-Browser)</span>`;
+            }
         }
     </script>
 </body>

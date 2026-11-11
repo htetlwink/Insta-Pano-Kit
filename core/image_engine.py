@@ -30,12 +30,13 @@ from __future__ import annotations
 import io
 import math
 import os
+import random
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from PIL import Image, ImageCms, ImageDraw, ImageFilter, ImageFont, ImageOps
+from PIL import ExifTags, Image, ImageChops, ImageCms, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 # ---------------------------------------------------------------------------
 # Constants & Aspect Ratio Presets
@@ -189,12 +190,30 @@ class SlicingConfig:
     title_text: Optional[str] = None
     watermark_text: Optional[str] = None
     watermark_all_slides: bool = False
+    color_filter: str = "None"
+    include_camera_card: bool = False
+    split_headline: Optional[str] = None
+    story_mode: bool = False
+    slice_weights: Optional[List[float]] = None
     format: str = "JPEG"  # "JPEG" or "PNG"
     jpeg_quality: int = 95
     prefix: str = "panorama_slice"
 
     def __post_init__(self) -> None:
         """Validate and clamp configuration parameters."""
+        if self.slice_weights:
+            try:
+                valid_weights = [float(w) for w in self.slice_weights if float(w) > 0]
+                if valid_weights:
+                    self.slice_weights = valid_weights
+                    self.num_slices = max(2, min(10, len(valid_weights)))
+                    if len(self.slice_weights) != self.num_slices:
+                        self.slice_weights = self.slice_weights[:self.num_slices]
+                else:
+                    self.slice_weights = None
+            except Exception:
+                self.slice_weights = None
+
         self.num_slices = max(2, min(10, int(self.num_slices)))
         self.pan_offset_x = max(-1.0, min(1.0, float(self.pan_offset_x)))
         self.pan_offset_y = max(-1.0, min(1.0, float(self.pan_offset_y)))
@@ -346,6 +365,278 @@ class ImageEngine:
             )
         )
 
+    @staticmethod
+    def apply_color_filter(img: Image.Image, filter_name: str) -> Image.Image:
+        """
+        Apply color grading and film presets using memory-efficient PIL transformations.
+        Supported filters:
+          - 'None': Unmodified image
+          - 'Cinematic Moody': Cool shadows, warm highlights, high contrast
+          - 'Kodak Warmth': Warm golden cast, gentle red/yellow boost
+          - 'Vintage 35mm': Raised blacks (faded matte shadows), warm analog tone
+          - 'B&W High Contrast': Rich monochrome with punchy contrast
+          - 'Film Grain': Subtle randomized noise texture overlay
+        """
+        name = (filter_name or "").strip().lower()
+        if not name or name == "none":
+            return img
+
+        orig_mode = img.mode
+        working_img = img.convert("RGB")
+
+        if name == "cinematic moody":
+            lut_r = [int(min(255, max(0, ((i / 255.0) ** 1.2) * 255 * 1.08 + (6 if i > 128 else -8)))) for i in range(256)]
+            lut_g = [int(min(255, max(0, ((i / 255.0) ** 1.15) * 255))) for i in range(256)]
+            lut_b = [int(min(255, max(0, ((i / 255.0) ** 1.1) * 255 * 0.92 + (16 if i < 128 else -10)))) for i in range(256)]
+            r, g, b = working_img.split()
+            working_img = Image.merge("RGB", (r.point(lut_r), g.point(lut_g), b.point(lut_b)))
+            working_img = ImageEnhance.Contrast(working_img).enhance(1.15)
+
+        elif name == "kodak warmth":
+            lut_r = [int(min(255, max(0, i * 1.06 + 6))) for i in range(256)]
+            lut_g = [int(min(255, max(0, i * 1.02 + 2))) for i in range(256)]
+            lut_b = [int(min(255, max(0, i * 0.90 - 4))) for i in range(256)]
+            r, g, b = working_img.split()
+            working_img = Image.merge("RGB", (r.point(lut_r), g.point(lut_g), b.point(lut_b)))
+            working_img = ImageEnhance.Color(working_img).enhance(1.12)
+
+        elif name == "vintage 35mm":
+            lut_r = [int(min(255, max(0, 30 + (i / 255.0) * 218))) for i in range(256)]
+            lut_g = [int(min(255, max(0, 26 + (i / 255.0) * 216))) for i in range(256)]
+            lut_b = [int(min(255, max(0, 36 + (i / 255.0) * 200))) for i in range(256)]
+            r, g, b = working_img.split()
+            working_img = Image.merge("RGB", (r.point(lut_r), g.point(lut_g), b.point(lut_b)))
+
+        elif name == "b&w high contrast":
+            gray = working_img.convert("L")
+            contrast_lut = [int(min(255, max(0, 255.0 / (1.0 + math.exp(-0.035 * (i - 128)))))) for i in range(256)]
+            gray = gray.point(contrast_lut)
+            working_img = ImageEnhance.Contrast(gray.convert("RGB")).enhance(1.25)
+
+        elif name == "film grain":
+            w, h = working_img.size
+            tile_size = 512
+            noise_bytes = bytes([min(255, max(0, int(random.gauss(128, 16)))) for _ in range(tile_size * tile_size)])
+            tile = Image.frombytes("L", (tile_size, tile_size), noise_bytes).convert("RGB")
+            noise_img = Image.new("RGB", (w, h))
+            for x in range(0, w, tile_size):
+                for y in range(0, h, tile_size):
+                    noise_img.paste(tile, (x, y))
+            working_img = ImageChops.soft_light(working_img, noise_img)
+
+        if orig_mode in ("RGBA", "LA"):
+            alpha = img.split()[-1]
+            working_img.putalpha(alpha)
+            return working_img
+        return working_img
+
+    @staticmethod
+    def extract_exif_metadata(source: Union[str, Path, Image.Image]) -> Dict[str, str]:
+        """
+        Extract photography EXIF metadata from an image path or PIL Image.
+        Returns a dictionary containing camera make/model, lens, focal length,
+        aperture, shutter speed, ISO, and date.
+        """
+        img: Optional[Image.Image] = None
+        should_close = False
+        if isinstance(source, (str, Path)):
+            try:
+                img = Image.open(str(source))
+                should_close = True
+            except Exception:
+                img = None
+        elif isinstance(source, Image.Image):
+            img = source
+
+        exif_raw: Dict[str, Any] = {}
+        if img is not None:
+            try:
+                exif = img.getexif()
+                if exif:
+                    for k, v in exif.items():
+                        tag_name = ExifTags.TAGS.get(k, str(k))
+                        exif_raw[tag_name] = v
+                    if hasattr(ExifTags, "IFD") and hasattr(ExifTags.IFD, "Exif"):
+                        try:
+                            exif_ifd = exif.get_ifd(ExifTags.IFD.Exif)
+                            if exif_ifd:
+                                for k, v in exif_ifd.items():
+                                    tag_name = ExifTags.TAGS.get(k, str(k))
+                                    exif_raw[tag_name] = v
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            finally:
+                if should_close and img is not None:
+                    try:
+                        img.close()
+                    except Exception:
+                        pass
+
+        meta: Dict[str, str] = {}
+        make = str(exif_raw.get("Make", "")).strip()
+        model = str(exif_raw.get("Model", "")).strip()
+        if make and model:
+            if model.lower().startswith(make.lower()):
+                camera = model
+            else:
+                camera = f"{make} {model}"
+        elif model:
+            camera = model
+        elif make:
+            camera = make
+        else:
+            camera = "Unknown Camera"
+
+        meta["camera"] = camera
+        meta["make"] = make or "Unknown"
+        meta["model"] = model or "Unknown"
+
+        lens = str(exif_raw.get("LensModel", "")).strip()
+        meta["lens"] = lens or "Standard Lens"
+
+        fl = exif_raw.get("FocalLength")
+        if fl is not None:
+            try:
+                fl_val = float(fl)
+                if fl_val.is_integer():
+                    meta["focal_length"] = f"{int(fl_val)}mm"
+                else:
+                    meta["focal_length"] = f"{fl_val:.1f}mm"
+            except Exception:
+                meta["focal_length"] = f"{fl}mm"
+        else:
+            meta["focal_length"] = "Unknown FL"
+
+        fn = exif_raw.get("FNumber")
+        if fn is not None:
+            try:
+                fn_val = float(fn)
+                if fn_val.is_integer():
+                    meta["aperture"] = f"f/{int(fn_val)}"
+                else:
+                    meta["aperture"] = f"f/{fn_val:.1f}"
+            except Exception:
+                meta["aperture"] = f"f/{fn}"
+        else:
+            meta["aperture"] = "Unknown Aperture"
+
+        et = exif_raw.get("ExposureTime")
+        if et is not None:
+            try:
+                et_val = float(et)
+                if 0 < et_val < 1.0:
+                    meta["shutter_speed"] = f"1/{int(round(1.0 / et_val))}s"
+                else:
+                    meta["shutter_speed"] = f"{et_val:.1f}s"
+            except Exception:
+                meta["shutter_speed"] = f"{et}s"
+        else:
+            meta["shutter_speed"] = "Unknown Shutter"
+
+        iso = (
+            exif_raw.get("ISOSpeedRatings")
+            or exif_raw.get("PhotographicSensitivity")
+            or exif_raw.get("ISO")
+        )
+        if iso is not None:
+            meta["iso"] = f"ISO {iso}"
+        else:
+            meta["iso"] = "Unknown ISO"
+
+        dt = str(exif_raw.get("DateTimeOriginal") or exif_raw.get("DateTime") or "").strip()
+        if dt:
+            meta["date"] = dt.split()[0].replace(":", "-")
+        else:
+            meta["date"] = "Unknown Date"
+
+        return meta
+
+    @staticmethod
+    def generate_camera_card(
+        exif_data: Dict[str, str],
+        width: int = 1080,
+        height: int = 1350,
+    ) -> Image.Image:
+        """
+        Generate a minimalist dark aesthetic photography card with camera specs and shooting details.
+        """
+        card = Image.new("RGB", (width, height), (13, 15, 18))
+        draw = ImageDraw.Draw(card)
+
+        # Inset minimalist border
+        pad = max(20, int(width * 0.037))
+        draw.rounded_rectangle(
+            [(pad, pad), (width - pad, height - pad)],
+            radius=20,
+            fill=(19, 21, 26),
+            outline=(38, 42, 53),
+            width=2,
+        )
+
+        font_badge = get_pil_font(size=16, bold=True)
+        font_cam = get_pil_font(size=42, bold=True)
+        font_lens = get_pil_font(size=22, bold=False)
+        font_lbl = get_pil_font(size=15, bold=True)
+        font_val = get_pil_font(size=34, bold=True)
+        font_foot = get_pil_font(size=16, bold=False)
+
+        # Header tag
+        draw.text((width // 2, pad + 55), "CAMERA & EXPOSURE DATA", fill=(148, 163, 184), font=font_badge, anchor="mm")
+
+        # Camera name
+        cam_name = exif_data.get("camera") or "Unknown Camera"
+        draw.text((width // 2, pad + 115), cam_name, fill=(255, 255, 255), font=font_cam, anchor="mm")
+
+        # Lens name
+        lens_name = exif_data.get("lens") or "Standard Lens"
+        draw.text((width // 2, pad + 170), lens_name, fill=(156, 163, 175), font=font_lens, anchor="mm")
+
+        # Subtle divider line
+        div_y = pad + 215
+        draw.line([(pad + 50, div_y), (width - pad - 50, div_y)], fill=(45, 50, 62), width=1)
+
+        # 2x2 grid of key shooting parameters
+        params = [
+            ("FOCAL LENGTH", exif_data.get("focal_length", "-")),
+            ("APERTURE", exif_data.get("aperture", "-")),
+            ("SHUTTER SPEED", exif_data.get("shutter_speed", "-")),
+            ("ISO SPEED", exif_data.get("iso", "-")),
+        ]
+
+        grid_top = div_y + 35
+        grid_bot = height - pad - 110
+        row_h = max(60, (grid_bot - grid_top - 20) // 2)
+        col_w = max(100, (width - 2 * pad - 120) // 2)
+
+        for idx, (label, val) in enumerate(params):
+            r = idx // 2
+            c = idx % 2
+            bx0 = pad + 50 + c * (col_w + 20)
+            by0 = grid_top + r * (row_h + 20)
+            bx1 = bx0 + col_w
+            by1 = by0 + row_h
+
+            draw.rounded_rectangle(
+                [(bx0, by0), (bx1, by1)],
+                radius=14,
+                fill=(26, 29, 36),
+                outline=(48, 53, 66),
+                width=1,
+            )
+
+            cx = (bx0 + bx1) // 2
+            draw.text((cx, by0 + int(row_h * 0.32)), label, fill=(148, 163, 184), font=font_lbl, anchor="mm")
+            draw.text((cx, by0 + int(row_h * 0.68)), str(val), fill=(255, 255, 255), font=font_val, anchor="mm")
+
+        # Footer date stamp
+        dt = exif_data.get("date", "Unknown Date")
+        foot_text = f"DATE: {dt}  •  INSTAPANORAMA PHOTO CARD"
+        draw.text((width // 2, height - pad - 45), foot_text, fill=(100, 116, 139), font=font_foot, anchor="mm")
+
+        return card
+
     # -----------------------------------------------------------------------
     # Panorama Carousel Slicing
     # -----------------------------------------------------------------------
@@ -379,13 +670,35 @@ class ImageEngine:
             new_h = target_h
 
             carousel_canvas = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-            slice_boundaries = [
-                (
-                    int(round(i * new_w / n_slices)),
-                    int(round((i + 1) * new_w / n_slices)),
+
+            # Apply color filter
+            if config.color_filter and config.color_filter.strip().lower() != "none":
+                carousel_canvas = cls.apply_color_filter(carousel_canvas, config.color_filter)
+
+            if config.slice_weights:
+                W = sum(config.slice_weights)
+                widths = [int(round(new_w * (w / W))) for w in config.slice_weights]
+                widths[-1] = new_w - sum(widths[:-1])
+                slice_boundaries = []
+                curr = 0
+                for w in widths:
+                    slice_boundaries.append((curr, curr + w))
+                    curr += w
+            else:
+                slice_boundaries = [
+                    (
+                        int(round(i * new_w / n_slices)),
+                        int(round((i + 1) * new_w / n_slices)),
+                    )
+                    for i in range(n_slices)
+                ]
+
+            # Split-seam headline across boundary 1
+            if config.split_headline and len(slice_boundaries) >= 2:
+                seam_x = slice_boundaries[0][1]
+                carousel_canvas = cls._draw_split_headline(
+                    carousel_canvas, seam_x, target_h, config.split_headline
                 )
-                for i in range(n_slices)
-            ]
 
             # Draw Seam Arrow across slide boundaries if requested
             if config.swipe_indicator == "Seam Arrow":
@@ -393,12 +706,21 @@ class ImageEngine:
                     carousel_canvas, slice_boundaries, target_h
                 )
 
+            total_display_slices = n_slices + 1 if config.include_camera_card else n_slices
+
             # Extract individual slices
             slices: List[Image.Image] = []
             for i, (x0, x1) in enumerate(slice_boundaries):
                 slice_img = carousel_canvas.crop((x0, 0, x1, new_h))
-                slice_img = cls._apply_slide_overlays(slice_img, i, n_slices, config)
+                slice_img = cls._apply_slide_overlays(slice_img, i, total_display_slices, config)
                 slices.append(slice_img)
+
+            # Append camera card if requested
+            if config.include_camera_card:
+                exif_data = cls.extract_exif_metadata(image)
+                card_w = slice_boundaries[-1][1] - slice_boundaries[-1][0] if slice_boundaries else target_w
+                card_img = cls.generate_camera_card(exif_data, width=card_w, height=target_h)
+                slices.append(card_img)
 
             return slices
 
@@ -426,20 +748,53 @@ class ImageEngine:
                 img, total_target_w, target_h, config.pan_offset_x, config.pan_offset_y
             )
 
-        # Draw Seam Arrows on unified canvas before slicing to guarantee exact seam alignment
-        if config.swipe_indicator == "Seam Arrow":
-            carousel_canvas = cls._draw_seam_arrows_standard(
-                carousel_canvas, n_slices, target_w, target_h
+        # Apply color filter
+        if config.color_filter and config.color_filter.strip().lower() != "none":
+            carousel_canvas = cls.apply_color_filter(carousel_canvas, config.color_filter)
+
+        # Determine slice boundaries (uniform or custom weights)
+        if config.slice_weights:
+            W = sum(config.slice_weights)
+            widths = [int(round(total_target_w * (w / W))) for w in config.slice_weights]
+            widths[-1] = total_target_w - sum(widths[:-1])
+            slice_boundaries = []
+            curr = 0
+            for w in widths:
+                slice_boundaries.append((curr, curr + w))
+                curr += w
+        else:
+            slice_boundaries = [
+                (i * target_w, (i + 1) * target_w)
+                for i in range(n_slices)
+            ]
+
+        # Draw Split-Seam Headline across boundary between Slide 1 and Slide 2
+        if config.split_headline and len(slice_boundaries) >= 2:
+            seam_x = slice_boundaries[0][1]
+            carousel_canvas = cls._draw_split_headline(
+                carousel_canvas, seam_x, target_h, config.split_headline
             )
 
-        # Slice into n_slices slides of size (target_w, target_h)
+        # Draw Seam Arrows on unified canvas before slicing to guarantee exact seam alignment
+        if config.swipe_indicator == "Seam Arrow":
+            carousel_canvas = cls._draw_seam_arrows_proportional(
+                carousel_canvas, slice_boundaries, target_h
+            )
+
+        total_display_slices = n_slices + 1 if config.include_camera_card else n_slices
+
+        # Slice into slides
         slices = []
-        for i in range(n_slices):
-            x0 = i * target_w
-            x1 = (i + 1) * target_w
+        for i, (x0, x1) in enumerate(slice_boundaries):
             slice_img = carousel_canvas.crop((x0, 0, x1, target_h))
-            slice_img = cls._apply_slide_overlays(slice_img, i, n_slices, config)
+            slice_img = cls._apply_slide_overlays(slice_img, i, total_display_slices, config)
             slices.append(slice_img)
+
+        # Append camera card if requested
+        if config.include_camera_card:
+            exif_data = cls.extract_exif_metadata(image)
+            card_img = cls.generate_camera_card(exif_data, width=target_w, height=target_h)
+            slices.append(card_img)
 
         return slices
 
@@ -695,6 +1050,11 @@ class ImageEngine:
         if config.watermark_text and (config.watermark_all_slides or slide_index == 0):
             cls._draw_watermark(draw, sw, sh, config.watermark_text)
 
+        # 5. Instagram Story Tap-Through Mode (9:16)
+        if config.story_mode:
+            cls._draw_story_progress_bars(draw, sw, sh, slide_index, total_slices)
+            cls._draw_story_tap_cue(draw, sw, sh, slide_index, total_slices)
+
         # Ensure clean white background if slide has alpha/transparency
         if slide_img.mode in ("RGBA", "LA") or (slide_img.mode == "P" and "transparency" in slide_img.info):
             base_bg = Image.new("RGBA", (sw, sh), (255, 255, 255, 255))
@@ -847,6 +1207,126 @@ class ImageEngine:
 
         draw.text((x + 1, y + 1), text, fill=(0, 0, 0, 140), font=font)
         draw.text((x, y), text, fill=(255, 255, 255, 190), font=font)
+
+    @staticmethod
+    def _draw_split_headline(
+        canvas: Image.Image,
+        seam_x: int,
+        target_h: int,
+        headline: str,
+    ) -> Image.Image:
+        """
+        Render large bold headline text positioned across the cut boundary between
+        Slide 1 and Slide 2 (centered horizontally on X = seam_x).
+        When sliced, the first half of the phrase is on Slide 1 and the second
+        half is on Slide 2, forming a seamless swipe prompt!
+        """
+        overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+
+        font = get_pil_font(size=64, bold=True)
+        bbox = draw.textbbox((0, 0), headline, font=font)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+
+        tx = seam_x - tw // 2
+        ty = int(target_h * 0.48) - th // 2
+
+        pad_x = 24
+        pad_y = 14
+        # Translucent contrast backing pill
+        draw.rounded_rectangle(
+            [(tx - pad_x, ty - pad_y), (tx + tw + pad_x, ty + th + pad_y)],
+            radius=12,
+            fill=(10, 10, 15, 175),
+            outline=(255, 255, 255, 120),
+            width=2,
+        )
+
+        # Drop shadow for crisp readability
+        draw.text((tx + 2, ty + 2), headline, fill=(0, 0, 0, 220), font=font)
+        draw.text((tx, ty), headline, fill=(255, 255, 255, 255), font=font)
+
+        canvas_rgba = canvas.convert("RGBA")
+        result = Image.alpha_composite(canvas_rgba, overlay)
+        return result.convert("RGB")
+
+    @staticmethod
+    def _draw_story_progress_bars(
+        draw: ImageDraw.ImageDraw,
+        sw: int,
+        sh: int,
+        slide_index: int,
+        total_slices: int,
+    ) -> None:
+        """Draw segmented Instagram Story progress bars along the top edge."""
+        bar_y = 32
+        bar_h = 5
+        margin_x = 28
+        gap = 8
+        avail_w = max(10, sw - 2 * margin_x - (total_slices - 1) * gap)
+        seg_w = max(1, avail_w // total_slices)
+
+        for j in range(total_slices):
+            x0 = margin_x + j * (seg_w + gap)
+            x1 = x0 + seg_w
+            # Drop shadow
+            draw.rounded_rectangle(
+                [(x0, bar_y + 1), (x1, bar_y + bar_h + 1)],
+                radius=max(1, bar_h // 2),
+                fill=(0, 0, 0, 120),
+            )
+            # Active/past vs upcoming segment color
+            if j <= slide_index:
+                color = (255, 255, 255, 255)
+            else:
+                color = (255, 255, 255, 90)
+            draw.rounded_rectangle(
+                [(x0, bar_y), (x1, bar_y + bar_h)],
+                radius=max(1, bar_h // 2),
+                fill=color,
+            )
+
+    @staticmethod
+    def _draw_story_tap_cue(
+        draw: ImageDraw.ImageDraw,
+        sw: int,
+        sh: int,
+        slide_index: int,
+        total_slices: int,
+    ) -> None:
+        """Draw subtle 'Tap to continue ➔' cue on the right border."""
+        if slide_index >= total_slices - 1:
+            return
+
+        text = "Tap to continue ➔"
+        font = get_pil_font(size=18, bold=True)
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+
+        pad_x = 16
+        pad_y = 10
+        pill_w = tw + pad_x * 2
+        pill_h = th + pad_y * 2
+
+        bx0 = sw - 24 - pill_w
+        by0 = int(sh * 0.5) - pill_h // 2
+
+        # Translucent glass pill
+        draw.rounded_rectangle(
+            [(bx0, by0), (bx0 + pill_w, by0 + pill_h)],
+            radius=pill_h // 2,
+            fill=(15, 15, 20, 180),
+            outline=(255, 255, 255, 120),
+            width=1,
+        )
+        draw.text(
+            (bx0 + pad_x, by0 + pad_y - 1),
+            text,
+            fill=(255, 255, 255, 245),
+            font=font,
+        )
 
     # -----------------------------------------------------------------------
     # Instagram Profile Grid Splitter (3x1, 3x2, 3x3)
@@ -1309,3 +1789,22 @@ def save_slices(
         jpeg_quality=jpeg_quality,
         optimize=optimize,
     )
+
+
+def apply_color_filter(img: Image.Image, filter_name: str) -> Image.Image:
+    """Convenience functional wrapper for ImageEngine.apply_color_filter."""
+    return ImageEngine.apply_color_filter(img, filter_name)
+
+
+def extract_exif_metadata(source: Union[str, Path, Image.Image]) -> Dict[str, str]:
+    """Convenience functional wrapper for ImageEngine.extract_exif_metadata."""
+    return ImageEngine.extract_exif_metadata(source)
+
+
+def generate_camera_card(
+    exif_data: Dict[str, str],
+    width: int = 1080,
+    height: int = 1350,
+) -> Image.Image:
+    """Convenience functional wrapper for ImageEngine.generate_camera_card."""
+    return ImageEngine.generate_camera_card(exif_data, width=width, height=height)

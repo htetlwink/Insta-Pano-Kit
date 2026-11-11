@@ -121,7 +121,7 @@ class VideoExportModal(ctk.CTkToplevel):
         ctk.CTkLabel(dir_box, text="Panning Motion & Direction:", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", pady=(0, 4))
         self.seg_dir = ctk.CTkSegmentedButton(
             dir_box,
-            values=["Left to Right", "Right to Left", "Ping-Pong (Boomerang)"],
+            values=["Left to Right", "Right to Left", "Ping-Pong (Boomerang)", "Zoom & Reveal"],
             font=ctk.CTkFont(size=11),
             height=30,
         )

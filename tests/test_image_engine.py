@@ -16,7 +16,7 @@ import os
 import shutil
 import tempfile
 import unittest
-from PIL import Image, ImageCms, ImageDraw
+from PIL import ExifTags, Image, ImageCms, ImageDraw
 
 from core.image_engine import (
     ASPECT_RATIOS,
@@ -24,6 +24,9 @@ from core.image_engine import (
     GridTile,
     ImageEngine,
     SlicingConfig,
+    apply_color_filter,
+    extract_exif_metadata,
+    generate_camera_card,
     generate_upload_guide,
     parse_color,
     save_slices,
@@ -457,6 +460,186 @@ class TestImageEngine(unittest.TestCase):
                 # Transparent regions should be pure white (255, 255, 255)
                 corner_px = img.getpixel((0, 0))
                 self.assertEqual(corner_px, (255, 255, 255))
+
+    # -----------------------------------------------------------------------
+    # 9. Phase 2 Features: Color Filters, EXIF Card, Split Headline, Story Mode, Custom Weights
+    # -----------------------------------------------------------------------
+
+    def test_color_grading_presets(self) -> None:
+        """Verify color filter presets apply correctly without memory leaks."""
+        test_img = Image.new("RGB", (300, 300), (100, 100, 100))
+        filters = [
+            "None",
+            "Cinematic Moody",
+            "Kodak Warmth",
+            "Vintage 35mm",
+            "B&W High Contrast",
+            "Film Grain",
+        ]
+        for f in filters:
+            filtered = apply_color_filter(test_img, f)
+            self.assertEqual(filtered.size, (300, 300))
+            self.assertEqual(filtered.mode, "RGB")
+
+        # Test None leaves pixel unchanged
+        none_img = apply_color_filter(test_img, "None")
+        self.assertEqual(none_img.getpixel((50, 50)), (100, 100, 100))
+
+        # Test B&W High Contrast produces grayscale R=G=B in RGB mode
+        bw_img = apply_color_filter(test_img, "B&W High Contrast")
+        px = bw_img.getpixel((50, 50))
+        self.assertEqual(px[0], px[1])
+        self.assertEqual(px[1], px[2])
+
+        # Test Vintage 35mm raises blacks on pure black image
+        black_img = Image.new("RGB", (100, 100), (0, 0, 0))
+        vintage_img = apply_color_filter(black_img, "Vintage 35mm")
+        v_px = vintage_img.getpixel((50, 50))
+        self.assertGreater(v_px[0], 20, "Vintage 35mm should raise black shadow floor")
+
+        # Test SlicingConfig with color_filter
+        cfg = SlicingConfig(num_slices=2, color_filter="Kodak Warmth")
+        slices = slice_panorama(self.wide_img, cfg)
+        self.assertEqual(len(slices), 2)
+        self.assertEqual(slices[0].size, (1080, 1350))
+
+    def test_exif_camera_metadata_and_card(self) -> None:
+        """Verify EXIF extraction, camera card generation, and inclusion in carousel slices."""
+        # 1. Create a temporary image file with rich EXIF metadata
+        exif_img = Image.new("RGB", (600, 300), (70, 120, 180))
+        exif = exif_img.getexif()
+        exif[ExifTags.Base.Make] = "Sony"
+        exif[ExifTags.Base.Model] = "ILCE-7RM4"
+        ifd = exif.get_ifd(ExifTags.IFD.Exif)
+        ifd[ExifTags.Base.LensModel] = "FE 24-70mm F2.8 GM"
+        ifd[ExifTags.Base.FNumber] = 2.8
+        ifd[ExifTags.Base.ExposureTime] = 0.002
+        ifd[ExifTags.Base.ISOSpeedRatings] = 100
+        ifd[ExifTags.Base.FocalLength] = 35.0
+        ifd[ExifTags.Base.DateTimeOriginal] = "2024:07:20 15:45:00"
+        exif[ExifTags.IFD.Exif] = ifd
+
+        exif_file_path = os.path.join(self.temp_dir, "test_exif.jpg")
+        exif_img.save(exif_file_path, format="JPEG", exif=exif)
+
+        # 2. Test extract_exif_metadata
+        meta = extract_exif_metadata(exif_file_path)
+        self.assertEqual(meta["make"], "Sony")
+        self.assertEqual(meta["model"], "ILCE-7RM4")
+        self.assertEqual(meta["camera"], "Sony ILCE-7RM4")
+        self.assertEqual(meta["lens"], "FE 24-70mm F2.8 GM")
+        self.assertEqual(meta["aperture"], "f/2.8")
+        self.assertEqual(meta["shutter_speed"], "1/500s")
+        self.assertEqual(meta["iso"], "ISO 100")
+        self.assertEqual(meta["focal_length"], "35mm")
+        self.assertEqual(meta["date"], "2024-07-20")
+
+        # 3. Test extract on image with no EXIF returns safe defaults
+        empty_meta = extract_exif_metadata(self.square_img)
+        self.assertEqual(empty_meta["camera"], "Unknown Camera")
+        self.assertIn("lens", empty_meta)
+
+        # 4. Test generate_camera_card
+        card = generate_camera_card(meta, width=1080, height=1350)
+        self.assertIsInstance(card, Image.Image)
+        self.assertEqual(card.size, (1080, 1350))
+        self.assertEqual(card.mode, "RGB")
+
+        # 5. Test include_camera_card in SlicingConfig
+        cfg = SlicingConfig(num_slices=3, include_camera_card=True)
+        slices = slice_panorama(exif_file_path, cfg)
+        # Expected: 3 photo slices + 1 camera card slide = 4 slices
+        self.assertEqual(len(slices), 4)
+        for s in slices:
+            self.assertEqual(s.size, (1080, 1350))
+        # The final slide is the camera card
+        card_slide = slices[-1]
+        self.assertEqual(card_slide.size, (1080, 1350))
+
+    def test_split_seam_headline(self) -> None:
+        """Verify split-seam headline is rendered across Slide 1 and Slide 2 boundary."""
+        cfg_plain = SlicingConfig(num_slices=3, split_headline=None)
+        cfg_headline = SlicingConfig(num_slices=3, split_headline="SWIPE TO DISCOVER")
+
+        slices_plain = slice_panorama(self.wide_img, cfg_plain)
+        slices_headline = slice_panorama(self.wide_img, cfg_headline)
+
+        self.assertEqual(len(slices_headline), 3)
+        # Slide 1 right edge and Slide 2 left edge should differ from the plain slices
+        # because the headline spans across the seam
+        self.assertNotEqual(
+            slices_headline[0].tobytes(),
+            slices_plain[0].tobytes(),
+            "Slide 1 should contain left half of split headline"
+        )
+        self.assertNotEqual(
+            slices_headline[1].tobytes(),
+            slices_plain[1].tobytes(),
+            "Slide 2 should contain right half of split headline"
+        )
+        # Slide 3 should be identical since headline is only across Slide 1 and 2
+        self.assertEqual(
+            slices_headline[2].tobytes(),
+            slices_plain[2].tobytes(),
+            "Slide 3 should not have split headline"
+        )
+
+    def test_instagram_story_tap_through_mode(self) -> None:
+        """Verify Story Mode draws segmented progress bars and tap-through cues."""
+        cfg = SlicingConfig(
+            num_slices=3,
+            aspect_ratio="Story (9:16)",
+            story_mode=True,
+        )
+        slices = slice_panorama(self.wide_img, cfg)
+        self.assertEqual(len(slices), 3)
+        for s in slices:
+            self.assertEqual(s.size, (1080, 1920))
+
+        # Check progress bar top pixels exist on each slide (y ~ 32)
+        # Slices with story_mode should differ from slices without story_mode
+        cfg_no_story = SlicingConfig(
+            num_slices=3,
+            aspect_ratio="Story (9:16)",
+            story_mode=False,
+        )
+        slices_no_story = slice_panorama(self.wide_img, cfg_no_story)
+        for i in range(3):
+            self.assertNotEqual(
+                slices[i].tobytes(),
+                slices_no_story[i].tobytes(),
+                f"Slide {i} should include story mode overlays"
+            )
+
+    def test_custom_slice_weights(self) -> None:
+        """Verify non-uniform custom slice weights distribute canvas widths correctly."""
+        # 1. Test Standard Fit with custom weights: [1.0, 1.5, 0.5]
+        # Total target width = 1080 * 3 = 3240
+        # Expected widths: 1.0/3.0 * 3240 = 1080, 1.5/3.0 * 3240 = 1620, 0.5/3.0 * 3240 = 540
+        cfg = SlicingConfig(
+            num_slices=3,
+            aspect_ratio="Portrait (4:5)",
+            slice_weights=[1.0, 1.5, 0.5],
+        )
+        slices = slice_panorama(self.wide_img, cfg)
+        self.assertEqual(len(slices), 3)
+        self.assertEqual(slices[0].size, (1080, 1350))
+        self.assertEqual(slices[1].size, (1620, 1350))
+        self.assertEqual(slices[2].size, (540, 1350))
+        self.assertEqual(sum(s.size[0] for s in slices), 3240)
+
+        # 2. Test Proportional mode with custom weights: [0.8, 1.2]
+        cfg_prop = SlicingConfig(
+            num_slices=2,
+            aspect_ratio="Portrait (4:5)",
+            fit_mode="Proportional (Full Width)",
+            slice_weights=[0.8, 1.2],
+        )
+        slices_prop = slice_panorama(self.wide_img, cfg_prop)
+        self.assertEqual(len(slices_prop), 2)
+        self.assertGreater(slices_prop[1].size[0], slices_prop[0].size[0])
+        self.assertEqual(slices_prop[0].size[1], 1350)
+        self.assertEqual(slices_prop[1].size[1], 1350)
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ class VideoPanConfig:
     target_ratio: str = "Reels/Story (9:16)"
     duration_seconds: float = 8.0
     fps: int = 30
-    direction: str = "Left to Right"
+    direction: str = "Left to Right"  # "Left to Right", "Right to Left", "Ping-Pong (Boomerang)", "Zoom and Reveal"
     motion_blur: bool = False
     output_path: Optional[str] = None
     easing: bool = True
@@ -155,87 +155,171 @@ def generate_panning_video(
         # Determine target output dimensions
         tw, th = get_target_resolution(config.target_ratio)
 
-        # Scale image so target height and width are both fully covered
-        scale_factor = max(tw / orig_w, th / orig_h)
-        scaled_w = int(round(orig_w * scale_factor))
-        scaled_h = int(round(orig_h * scale_factor))
-
-        # Ensure dimensions are even numbers (requirement for libx264 yuv420p)
-        if scaled_w % 2 != 0:
-            scaled_w += 1
-        if scaled_h % 2 != 0:
-            scaled_h += 1
-
         duration = max(0.5, float(config.duration_seconds))
         fps = max(1, int(config.fps))
         total_frames = max(1, int(round(fps * duration)))
 
-        # Determine panning movement
-        max_delta_x = max(0, scaled_w - tw)
-        max_delta_y = max(0, scaled_h - th)
-        y_expr = str(max_delta_y // 2)
-
         dir_lower = config.direction.lower().strip()
+        is_zoom_reveal = "zoom" in dir_lower
 
-        if max_delta_x == 0:
-            x_expr = "0"
-        else:
-            if "ping-pong" in dir_lower or "boomerang" in dir_lower:
-                # Boomerang / Ping-Pong: 0 -> 1 -> 0 using smooth cosine
-                x_expr = f"(in_w-{tw})*(0.5-0.5*cos(2*PI*t/{duration:.4f}))"
-            elif "right to left" in dir_lower or "rtl" in dir_lower:
-                if config.easing:
-                    x_expr = f"(in_w-{tw})*(0.5+0.5*cos(PI*t/{duration:.4f}))"
+        if is_zoom_reveal:
+            # Memory safety: cap image width to 3840px
+            max_input_w = 3840
+            if orig_w > max_input_w:
+                scale_ratio = max_input_w / orig_w
+                new_w = max_input_w
+                new_h = max(2, int(round(orig_h * scale_ratio)))
+                if new_h % 2 != 0:
+                    new_h += 1
+                pil_img = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                orig_w, orig_h = pil_img.size
+                if temp_image_path:
+                    pil_img.save(temp_image_path, format="PNG")
                 else:
-                    x_expr = f"(in_w-{tw})*(1-t/{duration:.4f})"
+                    tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+                    temp_image_path = tmp.name
+                    tmp.close()
+                    pil_img.save(temp_image_path, format="PNG")
+                    input_file_for_ffmpeg = temp_image_path
+
+            w_orig, h_orig = orig_w, orig_h
+            if w_orig % 2 != 0:
+                w_orig -= 1
+            if h_orig % 2 != 0:
+                h_orig -= 1
+
+            # Pad height to match target aspect ratio (e.g. 9:16)
+            h_pad = int(round(w_orig * th / tw))
+            if h_pad % 2 != 0:
+                h_pad += 1
+            y_center = max(0, (h_pad - h_orig) // 2)
+            z_max = max(1.0, h_pad / h_orig)
+            w_crop_max = w_orig / z_max
+            max_x = max(0.0, w_orig - w_crop_max)
+
+            f1 = min(int(round(1.5 * fps)), int(0.35 * total_frames))
+            f_zoom = min(int(round(1.5 * fps)), int(0.35 * total_frames))
+            f1 = max(1, f1)
+            f_zoom = max(1, f_zoom)
+            f2 = f1 + f_zoom
+            f_pan = max(1, total_frames - f2)
+
+            pad_filter = f"pad={w_orig}:{h_pad}:0:{y_center}:black"
+            z_expr = f"if(lte(on,{f1}),1,if(lte(on,{f2}),1+({z_max:.4f}-1)*(0.5-0.5*cos(PI*(on-{f1})/{f_zoom})),{z_max:.4f}))"
+            y_expr = "(ih-ih/zoom)/2"
+            x_expr = f"if(lte(on,{f1}),(iw-iw/zoom)/2,if(lte(on,{f2}),((iw-iw/zoom)/2)*(1-(0.5-0.5*cos(PI*(on-{f1})/{f_zoom}))),{max_x:.2f}*(0.5-0.5*cos(PI*(on-{f2})/{f_pan}))))"
+            zp_filter = f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':d={total_frames}:s={tw}x{th}:fps={fps}"
+
+            filter_parts = [pad_filter, zp_filter]
+            if config.motion_blur:
+                filter_parts.append("tmix=frames=3:weights='1 2 1'")
+
+            vf_str = ",".join(filter_parts)
+
+            # Determine output file path
+            if config.output_path:
+                out_path = os.path.abspath(config.output_path)
+                os.makedirs(os.path.dirname(out_path), exist_ok=True)
             else:
-                # Left to Right (default)
-                if config.easing:
-                    x_expr = f"(in_w-{tw})*(0.5-0.5*cos(PI*t/{duration:.4f}))"
+                if orig_path:
+                    stem, _ = os.path.splitext(orig_path)
+                    out_path = f"{stem}_reels_pan.mp4"
                 else:
-                    x_expr = f"(in_w-{tw})*(t/{duration:.4f})"
+                    tmp_out = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+                    out_path = tmp_out.name
+                    tmp_out.close()
 
-        # Build FFmpeg video filter chain
-        filter_parts = [
-            f"scale={scaled_w}:{scaled_h}",
-            f"crop=w={tw}:h={th}:x='{x_expr}':y='{y_expr}'",
-        ]
-
-        if config.motion_blur:
-            filter_parts.append("tmix=frames=3:weights='1 2 1'")
-
-        vf_str = ",".join(filter_parts)
-
-        # Determine output file path
-        if config.output_path:
-            out_path = os.path.abspath(config.output_path)
-            os.makedirs(os.path.dirname(out_path), exist_ok=True)
+            # Build FFmpeg command for Zoom and Reveal (without input loop)
+            cmd = [
+                ffmpeg_bin,
+                "-y",
+                "-i", input_file_for_ffmpeg,
+                "-vf", vf_str,
+                "-c:v", "libx264",
+                "-preset", config.preset or "medium",
+                "-crf", str(config.crf or 18),
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+                "-t", f"{duration:.3f}",
+                "-progress", "pipe:1",
+                out_path,
+            ]
         else:
-            if orig_path:
-                stem, _ = os.path.splitext(orig_path)
-                out_path = f"{stem}_reels_pan.mp4"
-            else:
-                tmp_out = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-                out_path = tmp_out.name
-                tmp_out.close()
+            # Scale image so target height and width are both fully covered
+            scale_factor = max(tw / orig_w, th / orig_h)
+            scaled_w = int(round(orig_w * scale_factor))
+            scaled_h = int(round(orig_h * scale_factor))
 
-        # Build FFmpeg command
-        cmd = [
-            ffmpeg_bin,
-            "-y",
-            "-loop", "1",
-            "-framerate", str(fps),
-            "-t", f"{duration:.3f}",
-            "-i", input_file_for_ffmpeg,
-            "-vf", vf_str,
-            "-c:v", "libx264",
-            "-preset", config.preset or "medium",
-            "-crf", str(config.crf or 18),
-            "-pix_fmt", "yuv420p",
-            "-movflags", "+faststart",
-            "-progress", "pipe:1",
-            out_path,
-        ]
+            # Ensure dimensions are even numbers (requirement for libx264 yuv420p)
+            if scaled_w % 2 != 0:
+                scaled_w += 1
+            if scaled_h % 2 != 0:
+                scaled_h += 1
+
+            # Determine panning movement
+            max_delta_x = max(0, scaled_w - tw)
+            max_delta_y = max(0, scaled_h - th)
+            y_expr = str(max_delta_y // 2)
+
+            if max_delta_x == 0:
+                x_expr = "0"
+            else:
+                if "ping-pong" in dir_lower or "boomerang" in dir_lower:
+                    # Boomerang / Ping-Pong: 0 -> 1 -> 0 using smooth cosine
+                    x_expr = f"(in_w-{tw})*(0.5-0.5*cos(2*PI*t/{duration:.4f}))"
+                elif "right to left" in dir_lower or "rtl" in dir_lower:
+                    if config.easing:
+                        x_expr = f"(in_w-{tw})*(0.5+0.5*cos(PI*t/{duration:.4f}))"
+                    else:
+                        x_expr = f"(in_w-{tw})*(1-t/{duration:.4f})"
+                else:
+                    # Left to Right (default)
+                    if config.easing:
+                        x_expr = f"(in_w-{tw})*(0.5-0.5*cos(PI*t/{duration:.4f}))"
+                    else:
+                        x_expr = f"(in_w-{tw})*(t/{duration:.4f})"
+
+            # Build FFmpeg video filter chain
+            filter_parts = [
+                f"scale={scaled_w}:{scaled_h}",
+                f"crop=w={tw}:h={th}:x='{x_expr}':y='{y_expr}'",
+            ]
+
+            if config.motion_blur:
+                filter_parts.append("tmix=frames=3:weights='1 2 1'")
+
+            vf_str = ",".join(filter_parts)
+
+            # Determine output file path
+            if config.output_path:
+                out_path = os.path.abspath(config.output_path)
+                os.makedirs(os.path.dirname(out_path), exist_ok=True)
+            else:
+                if orig_path:
+                    stem, _ = os.path.splitext(orig_path)
+                    out_path = f"{stem}_reels_pan.mp4"
+                else:
+                    tmp_out = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+                    out_path = tmp_out.name
+                    tmp_out.close()
+
+            # Build FFmpeg command
+            cmd = [
+                ffmpeg_bin,
+                "-y",
+                "-loop", "1",
+                "-framerate", str(fps),
+                "-t", f"{duration:.3f}",
+                "-i", input_file_for_ffmpeg,
+                "-vf", vf_str,
+                "-c:v", "libx264",
+                "-preset", config.preset or "medium",
+                "-crf", str(config.crf or 18),
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+                "-progress", "pipe:1",
+                out_path,
+            ]
 
         if progress_callback:
             progress_callback(0.05, "Initializing video render...")
