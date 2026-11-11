@@ -133,7 +133,7 @@ git push -u origin main
    * **Build Command:** *(leave empty)*
    * **Publish Directory:** `.` *(a single dot for the repository root)*
 5. Click **Create Static Site**.
-Your website URL (e.g. `https://instapano-web.onrender.com`) is live immediately with 0s loading time!
+Your website URL (e.g. `https://instapano.onrender.com/`) is live immediately with 0s loading time!
 
 ---
 
