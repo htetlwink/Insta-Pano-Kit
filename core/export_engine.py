@@ -6,7 +6,6 @@ Automates full multi-platform distribution pack exports:
 - Instagram Stories: 9:16 vertical tap-through sequence
 - LinkedIn Lookbook: Multi-page swipeable PDF document
 - Twitter / X Threads Header: 3:1 landscape header banner (1500x500 px)
-- Captions & Hashtags: Ready-to-publish aesthetic, technical, and engagement copy
 - Instagram Reels / Shorts: Panning MP4 video with ambient audio
 """
 
@@ -18,7 +17,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from PIL import Image, ImageOps
 
-from core.caption_engine import format_full_caption, generate_smart_captions
 from core.image_engine import (
     ImageEngine,
     SlicingConfig,
@@ -43,7 +41,6 @@ def export_omni_pack(
       - `instagram_stories/`: 9:16 vertical tap-through sequence
       - `linkedin_lookbook.pdf`: Multi-page swipeable PDF lookbook
       - `twitter_threads_header/`: 3:1 landscape header banner (1500x500 px)
-      - `captions.txt`: Formatted captions and tags
       - `reels_video.mp4`: (if include_video=True and FFmpeg is available)
 
     Args:
@@ -133,17 +130,7 @@ def export_omni_pack(
     twitter_banner.save(header_path, format="JPEG", quality=95)
     twitter_banner.save(header_alias, format="JPEG", quality=95)
 
-    # 6. Captions and Hashtags
-    captions_dict = generate_smart_captions(
-        pil_image=loaded_img,
-        num_slices=config.num_slices,
-    )
-    full_captions_text = format_full_caption(captions_dict)
-    captions_file_path = os.path.join(out_root, "captions.txt")
-    with open(captions_file_path, "w", encoding="utf-8") as f:
-        f.write(full_captions_text)
-
-    # 7. Animated Reels Video (if requested)
+    # 6. Animated Reels Video (if requested)
     reels_video_path: Optional[str] = None
     if include_video and is_ffmpeg_available():
         if video_config is None:
@@ -161,7 +148,7 @@ def export_omni_pack(
             reels_video_path = None
 
     # Count total generated files
-    total_files = len(feed_paths) + 1 + len(story_paths) + 2 + 1 + 1  # feed + guide + stories + headers + pdf + captions
+    total_files = len(feed_paths) + 1 + len(story_paths) + 2 + 1  # feed + guide + stories + headers + pdf
     if reels_video_path and os.path.exists(reels_video_path):
         total_files += 1
 
@@ -181,8 +168,6 @@ def export_omni_pack(
             "directory": twitter_dir,
             "file": header_path,
         },
-        "captions_file": captions_file_path,
-        "captions": captions_dict,
         "reels_video": reels_video_path,
         "total_files": total_files,
     }

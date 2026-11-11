@@ -71,19 +71,13 @@ A modern desktop application built with **CustomTkinter**, **Pillow (PIL)**, and
   - `instagram_stories/`: 9:16 vertical tap-through sequence with progress bars
   - `twitter_threads_header/`: 3:1 landscape header banner ($1500 \times 500\text{ px}$)
   - `linkedin_lookbook.pdf`: Multi-page swipeable PDF lookbook (Pillow `save_all=True`)
-  - `captions.txt`: Formatted aesthetic, technical, and engagement copy
   - `reels_video.mp4`: Animated Ken Burns panning video with ambient audio
 
 ### 12. 📱 Apple iPhone HEIC & Apple ProRAW / DNG Ingestion
 - **Browser-Side**: Converts `.heic`/`.heif` directly on client devices using `heic2any` (zero server upload needed).
 - **Backend / Desktop**: Decodes `.heic`/`.heif` via `pillow_heif` and extracts embedded full-resolution JPEGs from DNG/RAW camera files without heavy C dependencies.
 
-### 13. 🏷️ AI Storytelling Captions & Hashtags Scratchpad
-- Curated high-reach hashtags for *Panoramas & Carousels*, *Landscapes & Nature*, *Cityscapes & Architecture*, and *Mobile Photography*.
-- Ready-to-use swipe-prompt caption templates with one-click clipboard copying.
-- Dynamic EXIF camera breakdowns (*Shot on ... | ...mm | f/... | 1/...s | ISO ...*).
-
-### 14. 📦 Batch Panorama Slicer
+### 13. 📦 Batch Panorama Slicer
 - Queue multiple panorama photos or an entire folder to slice and organize each image into its own carousel subfolder.
 
 ---
@@ -127,7 +121,6 @@ pano maker/
 ├── SETUP.md                        # Deployment & setup guide
 ├── core/
 │   ├── image_engine.py             # Slicing, tilt straighten, smart seams, sRGB, unsharp mask, RAW/DNG
-│   ├── caption_engine.py           # Smart AI storytelling captions, EXIF specs, & curated hashtags
 │   ├── video_engine.py             # FFmpeg video generator with ambient audio & speed ramping
 │   ├── export_engine.py            # Omni-channel multi-platform ZIP & lookbook PDF pack exporter
 │   ├── web_share.py                # Local HTTP server + QR code generator + mobile web UI
@@ -137,11 +130,10 @@ pano maker/
 │   ├── qr_modal.py                 # QR transfer dialog with live local Wi-Fi server
 │   ├── video_modal.py              # Reel / Story panning video with audio & speed ramping
 │   ├── grid_modal.py               # 3x1 / 3x2 / 3x3 Profile Grid post dialog
-│   ├── caption_modal.py            # Smart storytelling captions & hashtags drawer
 │   └── batch_modal.py              # Batch panorama slicer queue modal
 └── tests/
     ├── test_image_engine.py        # Automated tests for image slicing, tilt, smart seams & RAW
     ├── test_video_engine.py        # Automated tests for video pan generator & ambient audio
-    ├── test_export_engine.py       # Automated tests for omni-channel pack, lookbook PDF & captions
+    ├── test_export_engine.py       # Automated tests for omni-channel pack & lookbook PDF
     └── test_web_share.py           # Automated tests for mobile QR server & download
 ```

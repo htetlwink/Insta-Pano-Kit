@@ -1,5 +1,5 @@
 """
-Unit and integration tests for Omni-Channel Social Export Engine and Smart Captions.
+Unit and integration tests for Omni-Channel Social Export Engine.
 """
 
 import os
@@ -8,14 +8,13 @@ import tempfile
 import unittest
 from PIL import Image
 
-from core.caption_engine import format_full_caption, generate_smart_captions
 from core.export_engine import export_omni_pack
 from core.image_engine import SlicingConfig
 from core.video_engine import VideoConfig, is_ffmpeg_available
 
 
 class TestExportEngine(unittest.TestCase):
-    """Test suite for core.export_engine and core.caption_engine."""
+    """Test suite for core.export_engine."""
 
     def setUp(self) -> None:
         self.temp_dir = tempfile.mkdtemp(prefix="test_export_engine_")
@@ -27,31 +26,6 @@ class TestExportEngine(unittest.TestCase):
     def tearDown(self) -> None:
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir, ignore_errors=True)
-
-    def test_smart_captions_generation(self) -> None:
-        """Verify smart captions generate all 4 core pillars across themes."""
-        themes = ["General", "Landscape", "Urban / Architecture", "Cinematic", "Minimalist"]
-
-        for theme in themes:
-            captions = generate_smart_captions(
-                image_path=self.pano_path,
-                num_slices=4,
-                theme=theme,
-            )
-
-            self.assertIn("aesthetic", captions)
-            self.assertIn("technical", captions)
-            self.assertIn("engagement", captions)
-            self.assertIn("hashtags", captions)
-
-            self.assertIn("4 slides", captions["aesthetic"])
-            self.assertIn("Shot on", captions["technical"])
-            self.assertIn("4-slide", captions["technical"])
-            self.assertTrue(len(captions["hashtags"].split()) >= 8)
-
-            full_formatted = format_full_caption(captions)
-            self.assertIn(captions["aesthetic"], full_formatted)
-            self.assertIn(captions["hashtags"], full_formatted)
 
     def test_export_omni_pack_directory_structure(self) -> None:
         """Verify export_omni_pack creates all required assets and directories."""
@@ -102,16 +76,8 @@ class TestExportEngine(unittest.TestCase):
         with Image.open(header_file) as h:
             self.assertEqual(h.size, (1500, 500))
 
-        # 5. Captions text file
-        captions_file = res["captions_file"]
-        self.assertTrue(os.path.exists(captions_file))
-        with open(captions_file, "r", encoding="utf-8") as f:
-            content = f.read()
-        self.assertIn("Shot on", content)
-        self.assertIn("#panoramaphotography", content)
-
         # Total files count
-        self.assertGreaterEqual(res["total_files"], 10)
+        self.assertGreaterEqual(res["total_files"], 9)
 
     def test_export_omni_pack_with_video(self) -> None:
         """Verify export_omni_pack includes reels_video.mp4 when requested."""

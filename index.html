@@ -336,50 +336,6 @@
                 <h3 class="text-sm font-bold text-gray-300">Individual Slide Downloads</h3>
                 <div id="galleryGrid" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></div>
             </div>
-
-            <!-- AI Storytelling Captions & Hashtags Panel -->
-            <div class="pt-4 border-t border-gray-800 space-y-3">
-                <div class="flex items-center justify-between">
-                    <h3 class="text-sm font-bold text-white flex items-center gap-2">
-                        <span>🏷️</span> AI Captions & Hashtags (Ready to Copy)
-                    </h3>
-                    <span class="text-[10px] text-gray-400">Tap to Copy</span>
-                </div>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                    <!-- Style 1: Aesthetic Story -->
-                    <div class="bg-gray-900/80 p-3.5 rounded-xl border border-gray-800 space-y-2 flex flex-col justify-between">
-                        <div class="space-y-1">
-                            <span class="font-bold text-pink-400 block text-xs">✨ Aesthetic Story Hook</span>
-                            <p id="captionAesthetic" class="text-gray-300 font-sans leading-relaxed text-[11px]"></p>
-                        </div>
-                        <button type="button" onclick="copyCaptionText('captionAesthetic', this)" class="w-full mt-2 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-200 font-semibold rounded text-[11px] transition">
-                            📋 Copy Caption
-                        </button>
-                    </div>
-
-                    <!-- Style 2: Technical Breakdown -->
-                    <div class="bg-gray-900/80 p-3.5 rounded-xl border border-gray-800 space-y-2 flex flex-col justify-between">
-                        <div class="space-y-1">
-                            <span class="font-bold text-blue-400 block text-xs">📷 Photography Specs & Gear</span>
-                            <p id="captionTechnical" class="text-gray-300 font-mono text-[11px] leading-relaxed"></p>
-                        </div>
-                        <button type="button" onclick="copyCaptionText('captionTechnical', this)" class="w-full mt-2 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-200 font-semibold rounded text-[11px] transition">
-                            📋 Copy Specs
-                        </button>
-                    </div>
-
-                    <!-- Style 3: Engagement Question -->
-                    <div class="bg-gray-900/80 p-3.5 rounded-xl border border-gray-800 space-y-2 flex flex-col justify-between">
-                        <div class="space-y-1">
-                            <span class="font-bold text-emerald-400 block text-xs">💬 Engagement Algorithm Hook</span>
-                            <p id="captionEngagement" class="text-gray-300 font-sans leading-relaxed text-[11px]"></p>
-                        </div>
-                        <button type="button" onclick="copyCaptionText('captionEngagement', this)" class="w-full mt-2 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-200 font-semibold rounded text-[11px] transition">
-                            📋 Copy Hook
-                        </button>
-                    </div>
-                </div>
-            </div>
         </div>
     </div>
 
@@ -1142,9 +1098,6 @@
                     });
                 }
 
-                // Generate AI Captions & Populate
-                generateAICaptions(nSlices, watermarkText, titleText);
-
                 displayClientResults();
                 setupNativeWebShare();
 
@@ -1224,35 +1177,6 @@
         }
 
         // -------------------------------------------------------------
-        // AI Captions & Hashtags
-        // -------------------------------------------------------------
-        function generateAICaptions(nSlices, author, title) {
-            const handle = author || '@photographer';
-            const tit = title || 'Wild Horizons';
-
-            const aesthetic = `Where silence speaks louder than words and the horizon stretches into infinity. 🌅✨ Every detail tells a story across ${nSlices} seamless frames.\n\nSwipe left to step into the full view ➔\n\nCaptured by ${handle}\n\n#Panorama #LandscapePhotography #Wanderlust #VisualsOfEarth #FilmAesthetic #EarthOutdoors`;
-            const technical = `📷 PANORAMA TECHNICAL SPECIFICATIONS:\n• Resolution: ${nSlices}x Multi-Slide Carousel (1080×1350 px)\n• Framing: Calibrated sRGB Pro Master\n• Master Edit: ${tit}\n• Credit: ${handle}\n\n#SonyAlpha #Fujifilm #DJIGlobal #PhotographyLife #ExifData #ProPhotographer`;
-            const engagement = `Which slide gives you the chills? Slide 1, 2, or 3? 🤔💬\n\nDrop your favorite number below! 👇 Bookmark this post 🔖 for your next travel inspiration.\n\n#PhotoOfTheDay #TravelGram #ExploreMore #RoamThePlanet`;
-
-            document.getElementById('captionAesthetic').textContent = aesthetic;
-            document.getElementById('captionTechnical').textContent = technical;
-            document.getElementById('captionEngagement').textContent = engagement;
-        }
-
-        function copyCaptionText(elementId, btn) {
-            const text = document.getElementById(elementId).textContent;
-            navigator.clipboard.writeText(text).then(() => {
-                const orig = btn.textContent;
-                btn.textContent = '✅ Copied to Clipboard!';
-                btn.classList.add('bg-emerald-700', 'text-white');
-                setTimeout(() => {
-                    btn.textContent = orig;
-                    btn.classList.remove('bg-emerald-700', 'text-white');
-                }, 2000);
-            });
-        }
-
-        // -------------------------------------------------------------
         // Omni-Channel 1-Click Multi-Platform Pack
         // -------------------------------------------------------------
         async function exportOmniChannelPack() {
@@ -1319,10 +1243,6 @@
                 twCtx.drawImage(loadedImage, (1500 - twDrawW) / 2, (500 - twDrawH) / 2, twDrawW, twDrawH);
                 const twBlob = await new Promise(r => twCanvas.toBlob(r, 'image/jpeg', 0.95));
                 twitterFolder.file('twitter_threads_header_3x1.jpg', twBlob);
-
-                // 4. Captions Text
-                const capText = `=== INSTAGRAM CAPTIONS & HASHTAGS ===\n\n[STYLE 1: AESTHETIC STORY]\n${document.getElementById('captionAesthetic').textContent}\n\n[STYLE 2: PHOTOGRAPHY SPECS]\n${document.getElementById('captionTechnical').textContent}\n\n[STYLE 3: ENGAGEMENT HOOK]\n${document.getElementById('captionEngagement').textContent}`;
-                zip.file('captions.txt', capText);
 
                 const zipBlob = await zip.generateAsync({ type: 'blob' });
                 const a = document.createElement('a');

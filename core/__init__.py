@@ -2,10 +2,6 @@
 Core processing modules for Insta-Pano-Kit.
 """
 
-from core.caption_engine import (
-    format_full_caption,
-    generate_smart_captions,
-)
 from core.export_engine import (
     export_omni_pack,
 )
@@ -50,11 +46,9 @@ __all__ = [
     "compute_smart_seams",
     "detect_horizon_tilt",
     "extract_exif_metadata",
-    "format_full_caption",
     "generate_ambient_audio",
     "generate_camera_card",
     "generate_panning_video",
-    "generate_smart_captions",
     "generate_upload_guide",
     "get_ffmpeg_path",
     "get_target_resolution",

@@ -14,7 +14,6 @@ The ultimate Instagram panoramic content suite:
 - Scan-to-Phone instant local Wi-Fi QR code transfer
 - Animated Ken Burns panning MP4 video generator for Instagram Reels & Stories
 - Instagram Profile Puzzle Grid splitter (3x1, 3x2, 3x3) with reverse upload sequence
-- Categorized photography captions & hashtags scratchpad
 - Bulk batch panorama queue processor
 """
 
@@ -46,7 +45,6 @@ from gui.phone_simulator import PhoneSimulatorModal
 from gui.qr_modal import QRTransferModal
 from gui.video_modal import VideoExportModal
 from gui.grid_modal import ProfileGridModal
-from gui.caption_modal import CaptionHashtagsModal
 from gui.batch_modal import BatchModal
 
 # ---------------------------------------------------------------------------
@@ -311,20 +309,7 @@ class InstaPanoramaSplitter(ctk.CTk):
         )
         self.btn_tool_grid.pack(side="left", padx=3)
 
-        # Tool 5: Captions & Hashtags
-        btn_tool_caption = ctk.CTkButton(
-            inner,
-            text="🏷️ Captions & Tags",
-            font=ctk.CTkFont(size=11, weight="bold"),
-            height=28,
-            width=120,
-            fg_color=("gray75", "gray25"),
-            hover_color=("gray65", "gray35"),
-            command=self._open_caption_modal,
-        )
-        btn_tool_caption.pack(side="left", padx=3)
-
-        # Tool 6: Batch Processor
+        # Tool 5: Batch Processor
         btn_tool_batch = ctk.CTkButton(
             inner,
             text="📦 Batch Slicer",
@@ -1592,15 +1577,6 @@ class InstaPanoramaSplitter(ctk.CTk):
             messagebox.showwarning("No Image", "Please load a panorama image first.")
             return
         ProfileGridModal(parent=self, image_path=self.image_path, pil_image=self.pil_source_image)
-
-    def _open_caption_modal(self) -> None:
-        """Launch Instagram Captions & Hashtags Scratchpad."""
-        CaptionHashtagsModal(
-            parent=self,
-            num_slices=self.num_slices_var.get(),
-            image=self.pil_source_image,
-            image_path=self.image_path,
-        )
 
     def _open_batch_modal(self) -> None:
         """Launch Batch Processing Modal."""
