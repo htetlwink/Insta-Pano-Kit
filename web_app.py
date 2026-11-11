@@ -393,12 +393,18 @@ HTML_TEMPLATE = """
                     body: formData
                 });
 
-                if (!response.ok) {
-                    const err = await response.json();
-                    throw new Error(err.error || 'Server error occurred');
+                const rawText = await response.text();
+                let data = null;
+                try {
+                    data = JSON.parse(rawText);
+                } catch (parseErr) {
+                    throw new Error(`Server returned HTTP ${response.status} (${rawText.slice(0, 120) || 'Connection reset by cloud'})`);
                 }
 
-                const data = await response.json();
+                if (!response.ok || !data) {
+                    throw new Error((data && data.error) || `Server returned HTTP ${response.status}`);
+                }
+
                 displayResults(data);
             } catch (err) {
                 alert('Slicing failed: ' + err.message);
@@ -470,12 +476,8 @@ def api_slice():
         if not file.filename:
             return jsonify({"error": "Empty filename"}), 400
 
-        # Stream directly to disk to prevent loading raw bytes in RAM
+        # Stream upload directly to disk to prevent loading raw bytes in RAM
         file.save(temp_input_path)
-
-        # Load with orientation normalization
-        raw_img = Image.open(temp_input_path)
-        img = ImageOps.exif_transpose(raw_img)
 
         # Parse form config
         num_slices = int(request.form.get("slices", 3))
@@ -505,13 +507,8 @@ def api_slice():
             jpeg_quality=95,
         )
 
-        # Slice panorama
-        slices = slice_panorama(img, config)
-
-        # Immediately free original image buffers
-        del raw_img
-        del img
-        gc.collect()
+        # Slice panorama directly from disk file path to eliminate memory duplicates
+        slices = slice_panorama(temp_input_path, config)
 
         # Save slices directly to disk in session folder
         saved_paths = save_slices(
